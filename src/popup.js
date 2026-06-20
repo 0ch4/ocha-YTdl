@@ -943,29 +943,41 @@ function formatAudioOption(fmt) {
 }
 
 async function downloadFormat(fmt, videoTitle, kind) {
-  const validation = await validateDownloadUrl(fmt);
-  if (!validation.ok) {
-    const message = `ダウンロードURLが動画/音声ではありません: ${validation.reason}`;
-    console.warn('[ytdl] Refused suspicious download:', message, fmt, validation);
-    alert(message);
-    return;
-  }
-
-  chrome.downloads.download({
-    url: fmt.url,
-    filename: buildFilename(videoTitle, fmt, kind),
-    saveAs: false
-  }, () => {
-    if (chrome.runtime.lastError) {
-      console.warn('[ytdl] Download failed:', chrome.runtime.lastError.message, fmt);
+  try {
+    const validation = await validateDownloadUrl(fmt);
+    if (!validation.ok) {
+      const message = `ダウンロードURLが動画/音声ではありません: ${validation.reason}`;
+      console.warn('[ytdl] Refused suspicious download:', message, fmt, validation);
+      alert(message);
+      return;
     }
-  });
+
+    const filename = buildFilename(videoTitle, fmt, kind);
+    if (validation.requiresRange) {
+      await downloadWithRange(fmt, filename, validation);
+      return;
+    }
+
+    chrome.downloads.download({
+      url: fmt.url,
+      filename,
+      saveAs: false
+    }, () => {
+      if (chrome.runtime.lastError) {
+        console.warn('[ytdl] Download failed:', chrome.runtime.lastError.message, fmt);
+      }
+    });
+  } catch (e) {
+    console.warn('[ytdl] Download failed:', e, fmt);
+    alert(`ダウンロードに失敗しました: ${e.message || e}`);
+  }
 }
 
 async function validateDownloadUrl(fmt) {
   try {
     let resp = await fetch(fmt.url, { method: 'HEAD' });
-    if (!resp.ok || !isExpectedMediaType(resp.headers.get('content-type'), fmt)) {
+    const headOk = resp.ok && isExpectedMediaType(resp.headers.get('content-type'), fmt);
+    if (!headOk) {
       resp = await fetch(fmt.url, { headers: { Range: 'bytes=0-0' } });
     }
 
@@ -978,10 +990,65 @@ async function validateDownloadUrl(fmt) {
       return { ok: false, reason: `Content-Type ${contentType || 'unknown'}`, contentType };
     }
 
-    return { ok: true, contentType };
+    return {
+      ok: true,
+      contentType,
+      requiresRange: !headOk,
+      totalBytes: parseTotalBytes(resp.headers.get('content-range')) || parseInt(resp.headers.get('content-length') || '', 10) || fmt.contentLength || null
+    };
   } catch (e) {
     return { ok: false, reason: e.message || String(e) };
   }
+}
+
+async function downloadWithRange(fmt, filename, validation) {
+  const totalBytes = validation.totalBytes;
+  if (!totalBytes) {
+    alert('Range ダウンロードに必要なファイルサイズを取得できませんでした。');
+    return;
+  }
+
+  const chunkSize = 4 * 1024 * 1024;
+  const chunks = [];
+
+  for (let start = 0; start < totalBytes; start += chunkSize) {
+    const end = Math.min(start + chunkSize - 1, totalBytes - 1);
+    const resp = await fetch(fmt.url, {
+      headers: {
+        Range: `bytes=${start}-${end}`
+      }
+    });
+
+    if (resp.status !== 206 && resp.status !== 200) {
+      throw new Error(`Range download failed: HTTP ${resp.status}`);
+    }
+
+    const contentType = resp.headers.get('content-type') || validation.contentType;
+    if (!isExpectedMediaType(contentType, fmt)) {
+      throw new Error(`Range download returned ${contentType || 'unknown content type'}`);
+    }
+
+    chunks.push(await resp.arrayBuffer());
+  }
+
+  const blob = new Blob(chunks, { type: validation.contentType || fmt.mimeType || 'application/octet-stream' });
+  const blobUrl = URL.createObjectURL(blob);
+
+  chrome.downloads.download({
+    url: blobUrl,
+    filename,
+    saveAs: false
+  }, () => {
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
+    if (chrome.runtime.lastError) {
+      console.warn('[ytdl] Blob download failed:', chrome.runtime.lastError.message, fmt);
+    }
+  });
+}
+
+function parseTotalBytes(contentRange) {
+  const m = String(contentRange || '').match(/\/(\d+)$/);
+  return m ? parseInt(m[1], 10) : null;
 }
 
 function isExpectedMediaType(contentType, fmt) {
