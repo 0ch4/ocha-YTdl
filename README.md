@@ -1,23 +1,25 @@
 # ocha-YTdl
 
-Chrome Manifest V3 extension for inspecting and downloading YouTube video formats from the current tab.
+YouTube の現在開いている動画ページから、利用可能な動画/音声フォーマットを確認してダウンロードする Chrome Manifest V3 拡張機能です。
 
-## Features
+English README: [README_EN.md](README_EN.md)
 
-- Supports regular YouTube watch pages and Shorts URLs.
-- Lists muxed video+audio, video-only, and audio-only formats.
-- Attempts multiple YouTube Innertube clients to expose adaptive formats such as 720p and 1080p when available.
-- Resolves YouTube `n` and signature challenges in a sandboxed page.
-- Enables the extension action on YouTube tabs and disables it elsewhere.
+## 機能
 
-## Install locally
+- 通常の YouTube 動画ページと Shorts URL に対応
+- 「動画 + 音声」「映像のみ」「音声のみ」のフォーマットを一覧表示
+- 720p/1080p などの adaptive format を取得するため、複数の YouTube Innertube クライアントを試行
+- YouTube の `n` challenge / signature を sandbox ページ内で解決
+- YouTube を開いているタブでは拡張機能アイコンを有効化し、それ以外では無効化
 
-1. Open `chrome://extensions`.
-2. Enable `Developer mode`.
-3. Click `Load unpacked`.
-4. Select this repository folder.
+## ローカルインストール
 
-## Layout
+1. Chrome で `chrome://extensions` を開く
+2. `デベロッパー モード` を有効にする
+3. `パッケージ化されていない拡張機能を読み込む` をクリック
+4. このリポジトリのフォルダを選択する
+
+## フォルダ構成
 
 ```text
 manifest.json
@@ -33,16 +35,20 @@ vendor/
   yt.solver.core.js
 ```
 
-The extension is intentionally build-free. All paths in `manifest.json` and HTML files are relative to this repository layout.
+この拡張機能はビルド工程なしで動作する構成です。`manifest.json` と HTML 内のパスは、このフォルダ構成を前提にした相対パスです。
 
-## Notes
+## 注意点
 
-YouTube commonly serves 720p/1080p as video-only adaptive formats. Downloaded high-resolution files may not include audio.
+YouTube では 720p/1080p などの高画質フォーマットが、音声なしの「映像のみ」として配信されることが多いです。その場合、拡張機能でダウンロードした高画質ファイルには音声が含まれません。
 
-Some formats may require YouTube-side tokens or streaming protocols that are not directly downloadable as a single file from a browser extension.
+また、一部のフォーマットは YouTube 側のトークンや、ブラウザ拡張だけでは単一ファイルとして扱いにくい配信方式を必要とする場合があります。
 
-## Vendored code
+## 同梱している依存ファイル
 
-- `vendor/meriyah.min.js`: Meriyah JavaScript parser.
-- `vendor/astring.min.js`: Astring JavaScript code generator.
-- `vendor/yt.solver.core.js`: generated from yt-dlp ejs logic, with the original SPDX header preserved.
+このリポジトリでは、ビルドなしで拡張機能を読み込めるように `vendor/` 配下へブラウザ向け JavaScript ファイルを同梱しています。
+
+- `vendor/meriyah.min.js`: Meriyah JavaScript parser
+- `vendor/astring.min.js`: Astring JavaScript code generator
+- `vendor/yt.solver.core.js`: yt-dlp ejs logic 由来の生成ファイル
+
+詳細は [THIRD_PARTY.md](THIRD_PARTY.md) を参照してください。
