@@ -7,10 +7,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   const nSigEl   = document.getElementById('nsig-status');
   const iframe   = document.getElementById('solver-iframe');
   const qualityPicker = document.getElementById('quality-picker');
-  const qualitySelect = document.getElementById('quality-select');
-  const downloadSelected = document.getElementById('download-selected');
   const qualityNote = document.getElementById('quality-note');
   const formatDebug = document.getElementById('format-debug');
+  const pickerEls = {
+    qualityPicker,
+    resolutionSelect: document.getElementById('video-resolution-select'),
+    fpsSelect: document.getElementById('video-fps-select'),
+    extSelect: document.getElementById('video-ext-select'),
+    videoSelect: document.getElementById('video-format-select'),
+    audioSelect: document.getElementById('audio-format-select'),
+    downloadVideo: document.getElementById('download-video-selected'),
+    downloadAudio: document.getElementById('download-audio-selected'),
+    downloadPair: document.getElementById('download-pair-selected'),
+    qualityNote
+  };
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const videoId = extractYouTubeVideoId(tab?.url);
@@ -261,9 +271,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // 4. Resolve URLs and render sections
   const muxedItags = new Set((rawFmts ?? []).map(f => f.itag));
+  const resolveStats = { unresolvedSig: 0, unresolvedN: 0, failed: 0 };
   const formats = allFmtsRaw.flatMap(fmt => {
     try {
-      const url = resolveUrl(fmt, nMap, sigMap);
+      const url = resolveUrl(fmt, nMap, sigMap, resolveStats);
       const mime = fmt.mimeType ?? '';
       const isMuxed = muxedItags.has(fmt.itag);
       const hasVideo = mime.startsWith('video/') || Boolean(fmt.width || fmt.height);
@@ -279,7 +290,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         source: fmt.source ?? null,
         height: fmt.height ?? null, fps: fmt.fps ?? null, bitrate: fmt.bitrate ?? null,
       }];
-    } catch (_) { return []; }
+    } catch (_) {
+      resolveStats.failed++;
+      return [];
+    }
   });
 
   if (formats.length === 0) {
@@ -301,13 +315,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderSection('muxed', muxed, title);
   renderSection('video', videoOnly, title, 'divider-video');
   renderSection('audio', audioOnly, title, 'divider-audio');
-  renderQualityPicker(formats.filter(f => f.hasVideo), title, {
-    qualityPicker,
-    qualitySelect,
-    downloadSelected,
-    qualityNote
-  }, formats);
-  renderFormatDebug(formatDebug, playerFetchDebug, formats);
+  renderFormatPicker(formats, title, pickerEls);
+  renderFormatDebug(formatDebug, playerFetchDebug, formats, resolveStats);
 
   function showError(msg) {
     statusEl.style.display = 'none';
@@ -499,7 +508,8 @@ async function fetchInnertubePlayerResponses(videoId, innertube = {}, statusEl =
         key: client.key,
         status: response.playabilityStatus || 'OK',
         formats: countRawFormats(response),
-        heights: getRawVideoHeights(response)
+        resolvable: countResolvableRawFormats(response),
+        heights: getResolvableRawVideoHeights(response)
       });
     } catch (e) {
       errors.push(`${client.key}: ${e.message}`);
@@ -748,12 +758,24 @@ function countRawFormats(response) {
   return (sd?.formats?.length ?? 0) + (sd?.adaptiveFormats?.length ?? 0);
 }
 
-function getRawVideoHeights(response) {
+function countResolvableRawFormats(response) {
+  const sd = response?.streamingData;
+  return [...(sd?.formats ?? []), ...(sd?.adaptiveFormats ?? [])]
+    .filter(canResolveRawFormat)
+    .length;
+}
+
+function getResolvableRawVideoHeights(response) {
   const sd = response?.streamingData;
   return [...new Set([...(sd?.formats ?? []), ...(sd?.adaptiveFormats ?? [])]
+    .filter(canResolveRawFormat)
     .filter(fmt => fmt.height || fmt.qualityLabel)
     .map(fmt => fmt.qualityLabel || `${fmt.height}p`))]
     .sort(compareQualityText);
+}
+
+function canResolveRawFormat(fmt) {
+  return Boolean(fmt.url || fmt.signatureCipher || fmt.cipher);
 }
 
 function dedupeRawFormats(formats) {
@@ -801,56 +823,142 @@ function renderSection(id, formats, videoTitle, dividerId) {
   }
 }
 
-function renderQualityPicker(formats, videoTitle, els, allFormats = formats) {
-  if (formats.length === 0 || !els.qualityPicker || !els.qualitySelect || !els.downloadSelected) return;
+function renderFormatPicker(formats, videoTitle, els) {
+  const videoFormats = formats.filter(fmt => fmt.hasVideo).sort(compareFormats);
+  const audioFormats = formats.filter(fmt => !fmt.hasVideo && fmt.hasAudio).sort(compareAudioFormats);
+  if (videoFormats.length === 0 && audioFormats.length === 0) return;
 
-  const sortedFormats = [...formats].sort(compareFormats);
-  els.qualitySelect.replaceChildren();
+  fillSelect(els.resolutionSelect, buildFilterOptions(videoFormats, fmt => fmt.height ? `${fmt.height}p` : 'unknown'), '解像度すべて');
+  fillSelect(els.fpsSelect, buildFilterOptions(videoFormats, fmt => fmt.fps ? `${fmt.fps}fps` : 'fps不明'), 'FPSすべて');
+  fillSelect(els.extSelect, buildFilterOptions(videoFormats, fmt => fmt.ext.toUpperCase()), '拡張子すべて');
 
-  sortedFormats.forEach((fmt, index) => {
-    const opt = document.createElement('option');
-    opt.value = String(index);
-    opt.textContent = `${fmt.quality} / ${formatKind(fmt)} / ${buildMeta(fmt)}`;
-    els.qualitySelect.appendChild(opt);
-  });
+  const updateVideoOptions = () => {
+    const selectedValue = els.videoSelect.value;
+    const filtered = videoFormats.filter(fmt =>
+      matchesFilter(els.resolutionSelect.value, fmt.height ? `${fmt.height}p` : 'unknown') &&
+      matchesFilter(els.fpsSelect.value, fmt.fps ? `${fmt.fps}fps` : 'fps不明') &&
+      matchesFilter(els.extSelect.value, fmt.ext.toUpperCase())
+    );
 
-  const updateNote = () => {
-    const fmt = sortedFormats[Number(els.qualitySelect.value)];
-    if (!fmt || !els.qualityNote) return;
-
-    if (fmt.hasVideo && !fmt.isMuxed) {
-      els.qualityNote.textContent = '720p以上などの高画質は、YouTube側の仕様で音声なしの映像ファイルとして提供される場合があります。';
-      els.qualityNote.style.display = 'block';
-    } else if (highestVideoHeight(allFormats) <= 360) {
-      els.qualityNote.textContent = 'この取得経路では360pまでしか返っていません。YouTube側の制限、PO Token、またはHLS/SABR配信のみの可能性があります。';
-      els.qualityNote.style.display = 'block';
-    } else {
-      els.qualityNote.textContent = '';
-      els.qualityNote.style.display = 'none';
+    fillFormatSelect(els.videoSelect, filtered, formatVideoOption);
+    if ([...els.videoSelect.options].some(opt => opt.value === selectedValue)) {
+      els.videoSelect.value = selectedValue;
     }
+    updatePickerState();
   };
 
-  els.downloadSelected.addEventListener('click', () => {
-    const fmt = sortedFormats[Number(els.qualitySelect.value)];
-    if (!fmt) return;
+  const updatePickerState = () => {
+    const video = getSelectedFormat(els.videoSelect);
+    const audio = getSelectedFormat(els.audioSelect);
 
-    chrome.downloads.download({
-      url: fmt.url,
-      filename: buildFilename(videoTitle, fmt),
-      saveAs: false
-    });
+    els.downloadVideo.disabled = !video;
+    els.downloadAudio.disabled = !audio;
+    els.downloadPair.disabled = !video && !audio;
+
+    if (!els.qualityNote) return;
+
+    const notes = [];
+    if (video?.hasVideo && !video.isMuxed) {
+      notes.push('選択中の高画質映像は音声なしです。音声DLまたは両方DLで音声ファイルも保存できます。');
+    }
+    if (video?.isMuxed) {
+      notes.push('選択中の映像は音声込みです。別音声を選ぶ必要はありません。');
+    }
+    if (highestVideoHeight(formats) <= 360) {
+      notes.push('この取得経路では360pまでしか返っていません。YouTube側の制限、PO Token、またはHLS/SABR配信のみの可能性があります。');
+    }
+
+    els.qualityNote.textContent = notes.join('\n');
+    els.qualityNote.style.display = notes.length ? 'block' : 'none';
+  };
+
+  fillFormatSelect(els.audioSelect, audioFormats, formatAudioOption);
+  updateVideoOptions();
+
+  els.resolutionSelect.addEventListener('change', updateVideoOptions);
+  els.fpsSelect.addEventListener('change', updateVideoOptions);
+  els.extSelect.addEventListener('change', updateVideoOptions);
+  els.videoSelect.addEventListener('change', updatePickerState);
+  els.audioSelect.addEventListener('change', updatePickerState);
+
+  els.downloadVideo.addEventListener('click', () => {
+    const video = getSelectedFormat(els.videoSelect);
+    if (video) downloadFormat(video, videoTitle, video.isMuxed ? 'muxed' : 'video');
   });
 
-  els.qualitySelect.addEventListener('change', updateNote);
-  updateNote();
+  els.downloadAudio.addEventListener('click', () => {
+    const audio = getSelectedFormat(els.audioSelect);
+    if (audio) downloadFormat(audio, videoTitle, 'audio');
+  });
+
+  els.downloadPair.addEventListener('click', () => {
+    const video = getSelectedFormat(els.videoSelect);
+    const audio = getSelectedFormat(els.audioSelect);
+    if (video) downloadFormat(video, videoTitle, video.isMuxed ? 'muxed' : 'video');
+    if (audio && !video?.isMuxed) downloadFormat(audio, videoTitle, 'audio');
+  });
+
   els.qualityPicker.style.display = 'grid';
+  updatePickerState();
+}
+
+function fillSelect(select, options, allLabel) {
+  select.replaceChildren();
+  select.appendChild(new Option(allLabel, '__all__'));
+  for (const option of options) {
+    select.appendChild(new Option(option, option));
+  }
+}
+
+function fillFormatSelect(select, formats, labelBuilder) {
+  select.replaceChildren();
+  formats.forEach((fmt, index) => {
+    const opt = new Option(labelBuilder(fmt), String(index));
+    opt._format = fmt;
+    select.appendChild(opt);
+  });
+}
+
+function buildFilterOptions(formats, mapper) {
+  return [...new Set(formats.map(mapper))]
+    .sort(compareFilterText);
+}
+
+function matchesFilter(selected, value) {
+  return selected === '__all__' || selected === value;
+}
+
+function getSelectedFormat(select) {
+  return select.selectedOptions[0]?._format ?? null;
+}
+
+function formatVideoOption(fmt) {
+  const parts = [fmt.quality, formatKind(fmt), buildMeta(fmt)];
+  return parts.filter(Boolean).join(' / ');
+}
+
+function formatAudioOption(fmt) {
+  const label = fmt.quality || 'audio';
+  return `${label} / ${buildMeta(fmt)}`;
+}
+
+function downloadFormat(fmt, videoTitle, kind) {
+  chrome.downloads.download({
+    url: fmt.url,
+    filename: buildFilename(videoTitle, fmt, kind),
+    saveAs: false
+  }, () => {
+    if (chrome.runtime.lastError) {
+      console.warn('[ytdl] Download failed:', chrome.runtime.lastError.message, fmt);
+    }
+  });
 }
 
 function highestVideoHeight(formats) {
   return formats.reduce((max, fmt) => fmt.hasVideo ? Math.max(max, fmt.height ?? 0) : max, 0);
 }
 
-function renderFormatDebug(el, debug, formats) {
+function renderFormatDebug(el, debug, formats, resolveStats = null) {
   if (!el || !debug) return;
 
   const sourceSummary = Object.entries(groupFormatsBySource(formats))
@@ -863,19 +971,21 @@ function renderFormatDebug(el, debug, formats) {
     });
 
   const clientSummary = (debug.clients ?? [])
-    .map(client => `${client.key}: ${client.formats}件${client.heights?.length ? ` (${client.heights.join(', ')})` : ''}`);
+    .map(client => `${client.key}: 表示可能${client.resolvable}/${client.formats}件${client.heights?.length ? ` (${client.heights.join(', ')})` : ''}`);
 
   const errors = (debug.errors ?? []).slice(0, 3);
   const lines = [
     ...clientSummary,
     ...sourceSummary.map(line => `表示: ${line}`),
+    ...(resolveStats?.unresolvedSig ? [`署名未復号で除外: ${resolveStats.unresolvedSig}件`] : []),
+    ...(resolveStats?.unresolvedN ? [`n未復号: ${resolveStats.unresolvedN}件`] : []),
     ...errors.map(line => `失敗: ${line}`)
   ];
 
   if (lines.length === 0) return;
 
   el.textContent = lines.join('\n');
-  el.style.display = highestVideoHeight(formats) <= 360 || errors.length ? 'block' : 'none';
+  el.style.display = highestVideoHeight(formats) <= 360 || errors.length || resolveStats?.unresolvedSig ? 'block' : 'none';
 }
 
 function groupFormatsBySource(formats) {
@@ -904,7 +1014,7 @@ function buildItem(fmt, videoTitle) {
   `;
 
   const url = fmt.url;
-  const filename = buildFilename(videoTitle, fmt);
+  const filename = buildFilename(videoTitle, fmt, fmt.isMuxed ? 'muxed' : fmt.hasVideo ? 'video' : 'audio');
 
   li.querySelector('.copy-btn').addEventListener('click', async () => {
     await navigator.clipboard.writeText(url);
@@ -935,8 +1045,12 @@ function formatQualityLabel(fmt) {
   return `itag-${fmt.itag}`;
 }
 
-function buildFilename(videoTitle, fmt) {
-  return `${sanitize(videoTitle)}_${sanitize(fmt.quality)}.${fmt.ext}`;
+function buildFilename(videoTitle, fmt, kind = null) {
+  const parts = [sanitize(videoTitle)];
+  if (kind) parts.push(kind);
+  parts.push(sanitize(fmt.quality));
+  if (fmt.fps && fmt.hasVideo) parts.push(`${fmt.fps}fps`);
+  return `${parts.filter(Boolean).join('_')}.${fmt.ext}`;
 }
 
 function compareFormats(a, b) {
@@ -946,8 +1060,23 @@ function compareFormats(a, b) {
     || (b.bitrate ?? 0) - (a.bitrate ?? 0);
 }
 
+function compareAudioFormats(a, b) {
+  return (b.bitrate ?? 0) - (a.bitrate ?? 0)
+    || String(a.ext).localeCompare(String(b.ext))
+    || String(a.source ?? '').localeCompare(String(b.source ?? ''));
+}
+
 function compareQualityText(a, b) {
-  return parseInt(b, 10) - parseInt(a, 10);
+  const numA = parseInt(a, 10);
+  const numB = parseInt(b, 10);
+  if (Number.isFinite(numA) && Number.isFinite(numB)) return numB - numA;
+  return String(a).localeCompare(String(b));
+}
+
+function compareFilterText(a, b) {
+  if (a === 'unknown' || a === 'fps不明') return 1;
+  if (b === 'unknown' || b === 'fps不明') return -1;
+  return compareQualityText(a, b);
 }
 
 function formatKind(fmt) {
@@ -961,7 +1090,7 @@ function sanitize(name) {
   return name.replace(/[\\/:*?"<>|]/g, '_').slice(0, 120);
 }
 
-function resolveUrl(fmt, nMap, sigMap) {
+function resolveUrl(fmt, nMap, sigMap, stats = null) {
   let url = fmt.url;
   let s = null;
   let sp = 'sig';
@@ -976,28 +1105,33 @@ function resolveUrl(fmt, nMap, sigMap) {
   
   if (!url) throw new Error('URL not found');
   
-  try {
-    const u = new URL(url);
-    
-    // 1. Resolve standard signature (sig)
-    if (s) {
-      const decryptedSig = sigMap[s] || s;
-      u.searchParams.set(sp, decryptedSig);
+  const u = new URL(url);
+
+  // 1. Resolve standard signature (sig)
+  if (s) {
+    const decryptedSig = sigMap[s];
+    if (!decryptedSig || decryptedSig === s) {
+      if (stats) stats.unresolvedSig++;
+      throw new Error('signature not decrypted');
     }
-    
-    // 2. Resolve n-signature
-    const n = u.searchParams.get('n');
-    if (n && nMap[n] && nMap[n] !== n) {
-      u.searchParams.set('n', nMap[n]);
-    }
-    
-    url = u.toString();
-  } catch (_) {}
+    u.searchParams.set(sp, decryptedSig);
+  }
+
+  // 2. Resolve n-signature
+  const n = u.searchParams.get('n');
+  if (n && nMap[n] && nMap[n] !== n) {
+    u.searchParams.set('n', nMap[n]);
+  } else if (n && stats) {
+    stats.unresolvedN++;
+  }
+
+  url = u.toString();
   
   return url;
 }
 
 function mimeToExt(mime) {
+  if (mime.startsWith('audio/') && mime.includes('mp4')) return 'm4a';
   if (mime.includes('mp4'))  return 'mp4';
   if (mime.includes('webm')) return 'webm';
   if (mime.includes('opus') || mime.includes('ogg')) return 'opus';

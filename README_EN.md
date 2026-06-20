@@ -8,6 +8,7 @@ Chrome Manifest V3 extension for inspecting and downloading YouTube video format
 
 - Supports regular YouTube watch pages and Shorts URLs.
 - Lists muxed video+audio, video-only, and audio-only formats.
+- Provides separate selectors for resolution, FPS, extension, and audio format.
 - Attempts multiple YouTube Innertube clients to expose adaptive formats such as 720p and 1080p when available.
 - Resolves YouTube `n` and signature challenges in a sandboxed page.
 - Enables the extension action on YouTube tabs and disables it elsewhere.
@@ -40,6 +41,8 @@ The extension is intentionally build-free. All paths in `manifest.json` and HTML
 ## Notes
 
 YouTube commonly serves 720p/1080p as video-only adaptive formats. Downloaded high-resolution files may not include audio.
+
+This extension saves video and audio as separate files. It does not mux them into a single MP4 inside the browser extension.
 
 Some formats may require YouTube-side tokens or streaming protocols that are not directly downloadable as a single file from a browser extension.
 

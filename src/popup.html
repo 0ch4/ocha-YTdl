@@ -46,22 +46,46 @@
 
     #quality-picker {
       display: none;
-      grid-template-columns: 1fr auto;
+      grid-template-columns: 1fr 1fr 1fr;
       gap: 6px;
       margin-bottom: 8px;
     }
-    #quality-select {
+    .picker-row {
+      display: grid;
+      grid-column: 1 / -1;
+      grid-template-columns: 1fr;
+      gap: 4px;
+    }
+    .picker-filters {
+      display: grid;
+      grid-column: 1 / -1;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 6px;
+    }
+    .picker-actions {
+      display: grid;
+      grid-column: 1 / -1;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 6px;
+    }
+    .picker-label {
+      color: #777;
+      font-size: 10px;
+      font-weight: 600;
+    }
+    .picker-select {
       min-width: 0;
       background: #1a1a1a; color: #e8e8e8;
       border: 1px solid #333; border-radius: 4px;
       padding: 6px 7px; font-size: 12px;
     }
-    #download-selected {
+    .picker-btn {
       background: #cc0000; color: #fff;
       border: none; border-radius: 4px;
-      padding: 6px 12px; font-size: 12px; font-weight: 600; cursor: pointer;
+      padding: 6px 8px; font-size: 11px; font-weight: 600; cursor: pointer;
     }
-    #download-selected:hover { background: #ff2222; }
+    .picker-btn:hover { background: #ff2222; }
+    .picker-btn:disabled { background: #333; color: #777; cursor: not-allowed; }
     #quality-note {
       display: none;
       color: #888;
@@ -123,7 +147,7 @@
 <body>
   <header>
     <h1>ocha-YTdl</h1>
-    <span id="version">v0.3.5</span>
+    <span id="version">v0.3.6</span>
   </header>
 
   <div id="video-title"></div>
@@ -132,8 +156,24 @@
   <div id="error"></div>
 
   <div id="quality-picker">
-    <select id="quality-select" aria-label="画質"></select>
-    <button id="download-selected">DL</button>
+    <div class="picker-filters">
+      <select class="picker-select" id="video-resolution-select" aria-label="解像度"></select>
+      <select class="picker-select" id="video-fps-select" aria-label="フレームレート"></select>
+      <select class="picker-select" id="video-ext-select" aria-label="拡張子"></select>
+    </div>
+    <div class="picker-row">
+      <div class="picker-label">映像フォーマット</div>
+      <select class="picker-select" id="video-format-select" aria-label="映像フォーマット"></select>
+    </div>
+    <div class="picker-row">
+      <div class="picker-label">音声フォーマット</div>
+      <select class="picker-select" id="audio-format-select" aria-label="音声フォーマット"></select>
+    </div>
+    <div class="picker-actions">
+      <button class="picker-btn" id="download-video-selected">映像DL</button>
+      <button class="picker-btn" id="download-audio-selected">音声DL</button>
+      <button class="picker-btn" id="download-pair-selected">両方DL</button>
+    </div>
   </div>
   <div id="quality-note"></div>
   <div id="format-debug"></div>
