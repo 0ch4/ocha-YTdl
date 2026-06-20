@@ -111,7 +111,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let playerFetchDebug = null;
   try {
     statusEl.textContent = '動画フォーマットを確認中...';
-    const fetchResult = await fetchInnertubePlayerResponses(videoId, pageGlobals?.innertube, statusEl);
+    const fetchResult = await fetchInnertubePlayerResponses(videoId, pageGlobals?.innertube, statusEl, tab.id);
     apiPlayerResponse = fetchResult.responses;
     playerFetchDebug = fetchResult.debug;
   } catch (e) {
@@ -484,7 +484,7 @@ function getClientNameHeader(clientName) {
   return '1';
 }
 
-async function fetchInnertubePlayerResponses(videoId, innertube = {}, statusEl = null) {
+async function fetchInnertubePlayerResponses(videoId, innertube = {}, statusEl = null, tabId = null) {
   const clients = buildInnertubeClients(innertube);
   const responses = [];
   const debug = { clients: [], errors: [] };
@@ -493,7 +493,7 @@ async function fetchInnertubePlayerResponses(videoId, innertube = {}, statusEl =
   for (const client of clients) {
     try {
       if (statusEl) statusEl.textContent = `動画フォーマットを確認中... (${client.key})`;
-      const response = await fetchInnertubePlayerResponse(videoId, innertube, client);
+      const response = await fetchInnertubePlayerResponse(videoId, innertube, client, tabId);
       responses.push(response);
       debug.clients.push({
         key: client.key,
@@ -601,11 +601,87 @@ function buildInnertubeClients(innertube = {}) {
   ];
 }
 
-async function fetchInnertubePlayerResponse(videoId, innertube = {}, clientConfig) {
+async function fetchInnertubePlayerResponse(videoId, innertube = {}, clientConfig, tabId = null) {
   const apiKey = innertube?.apiKey || DEFAULT_INNERTUBE_API_KEY;
 
   const context = clientConfig.context;
   const client = context.client || {};
+
+  let data;
+  if (tabId) {
+    data = await fetchInnertubePlayerInPage(tabId, videoId, apiKey, clientConfig, getClientNameHeader(clientConfig.clientName || client.clientName));
+  } else {
+    data = await fetchInnertubePlayerFromExtension(videoId, apiKey, clientConfig, context, client);
+  }
+
+  if (!data?.streamingData) {
+    throw new Error(data?.playabilityStatus?.reason || data?.error || 'streamingData not found');
+  }
+
+  return markPlayerResponseSource({
+    playabilityStatus: data.playabilityStatus?.status || 'OK',
+    videoDetails: data.videoDetails ? { title: data.videoDetails.title } : null,
+    streamingData: data.streamingData
+  }, clientConfig.key);
+}
+
+async function fetchInnertubePlayerInPage(tabId, videoId, apiKey, clientConfig, clientNameHeader) {
+  const [result] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    args: [videoId, apiKey, clientConfig, clientNameHeader],
+    func: async (videoId, apiKey, clientConfig, clientNameHeader) => {
+      const context = clientConfig.context;
+      const client = context.client || {};
+
+      try {
+        const resp = await fetch(`https://www.youtube.com/youtubei/v1/player?key=${encodeURIComponent(apiKey)}&prettyPrint=false`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-YouTube-Client-Name': String(clientNameHeader),
+            'X-YouTube-Client-Version': String(clientConfig.clientVersion || client.clientVersion || '')
+          },
+          body: JSON.stringify({
+            context,
+            videoId,
+            playbackContext: {
+              contentPlaybackContext: {
+                html5Preference: 'HTML5_PREF_WANTS'
+              }
+            },
+            contentCheckOk: true,
+            racyCheckOk: true
+          })
+        });
+
+        const text = await resp.text();
+        let data = null;
+        try {
+          data = text ? JSON.parse(text) : null;
+        } catch (_) {}
+
+        if (!resp.ok) {
+          return {
+            error: `Innertube player failed in page: ${resp.status}`,
+            playabilityStatus: data?.playabilityStatus || null
+          };
+        }
+
+        return data || { error: 'empty Innertube response' };
+      } catch (e) {
+        return { error: e?.message || String(e) };
+      }
+    }
+  });
+
+  const data = result?.result;
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
+async function fetchInnertubePlayerFromExtension(videoId, apiKey, clientConfig, context, client) {
   const resp = await fetch(`https://www.youtube.com/youtubei/v1/player?key=${encodeURIComponent(apiKey)}&prettyPrint=false`, {
     method: 'POST',
     credentials: 'include',
@@ -631,16 +707,7 @@ async function fetchInnertubePlayerResponse(videoId, innertube = {}, clientConfi
     throw new Error(`Innertube player failed: ${resp.status}`);
   }
 
-  const data = await resp.json();
-  if (!data?.streamingData) {
-    throw new Error(data?.playabilityStatus?.reason || 'streamingData not found');
-  }
-
-  return markPlayerResponseSource({
-    playabilityStatus: data.playabilityStatus?.status || 'OK',
-    videoDetails: data.videoDetails ? { title: data.videoDetails.title } : null,
-    streamingData: data.streamingData
-  }, clientConfig.key);
+  return resp.json();
 }
 
 function pickBestPlayerResponse(responses) {
