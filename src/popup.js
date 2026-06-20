@@ -1,4 +1,5 @@
 const DEFAULT_INNERTUBE_API_KEY = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
+const RANGE_CHUNK_SIZE = 128 * 1024;
 
 document.addEventListener('DOMContentLoaded', async () => {
   const statusEl = document.getElementById('status');
@@ -656,11 +657,6 @@ async function fetchInnertubePlayerInPage(tabId, videoId, apiKey, clientConfig, 
           body: JSON.stringify({
             context,
             videoId,
-            playbackContext: {
-              contentPlaybackContext: {
-                html5Preference: 'HTML5_PREF_WANTS'
-              }
-            },
             contentCheckOk: true,
             racyCheckOk: true
           })
@@ -703,11 +699,6 @@ async function fetchInnertubePlayerFromExtension(videoId, apiKey, clientConfig, 
     body: JSON.stringify({
       context,
       videoId,
-      playbackContext: {
-        contentPlaybackContext: {
-          html5Preference: 'HTML5_PREF_WANTS'
-        }
-      },
       contentCheckOk: true,
       racyCheckOk: true
     })
@@ -990,11 +981,33 @@ async function validateDownloadUrl(fmt) {
       return { ok: false, reason: `Content-Type ${contentType || 'unknown'}`, contentType };
     }
 
+    const totalBytes = parseTotalBytes(resp.headers.get('content-range')) || parseInt(resp.headers.get('content-length') || '', 10) || fmt.contentLength || null;
+    if (!headOk && totalBytes && totalBytes > 1) {
+      const checkStarts = [...new Set([
+        Math.min(RANGE_CHUNK_SIZE, totalBytes - 1),
+        Math.min(4 * 1024 * 1024, totalBytes - 1),
+        Math.max(0, totalBytes - RANGE_CHUNK_SIZE)
+      ])];
+
+      for (const checkStart of checkStarts) {
+        const checkEnd = Math.min(checkStart + Math.min(RANGE_CHUNK_SIZE, totalBytes - checkStart) - 1, totalBytes - 1);
+        const nextResp = await fetch(fmt.url, { headers: { Range: `bytes=${checkStart}-${checkEnd}` } });
+        const nextType = nextResp.headers.get('content-type') || '';
+        if (nextResp.status !== 206 || !isExpectedMediaType(nextType, fmt)) {
+          return {
+            ok: false,
+            reason: `Range continuation failed at ${checkStart}: HTTP ${nextResp.status} ${nextType || 'unknown'}`,
+            contentType: nextType
+          };
+        }
+      }
+    }
+
     return {
       ok: true,
       contentType,
       requiresRange: !headOk,
-      totalBytes: parseTotalBytes(resp.headers.get('content-range')) || parseInt(resp.headers.get('content-length') || '', 10) || fmt.contentLength || null
+      totalBytes
     };
   } catch (e) {
     return { ok: false, reason: e.message || String(e) };
@@ -1008,11 +1021,10 @@ async function downloadWithRange(fmt, filename, validation) {
     return;
   }
 
-  const chunkSize = 4 * 1024 * 1024;
   const chunks = [];
 
-  for (let start = 0; start < totalBytes; start += chunkSize) {
-    const end = Math.min(start + chunkSize - 1, totalBytes - 1);
+  for (let start = 0; start < totalBytes; start += RANGE_CHUNK_SIZE) {
+    const end = Math.min(start + RANGE_CHUNK_SIZE - 1, totalBytes - 1);
     const resp = await fetch(fmt.url, {
       headers: {
         Range: `bytes=${start}-${end}`

@@ -46,6 +46,8 @@ This extension saves video and audio as separate files. It does not mux them int
 
 Some high-resolution formats return `403` for plain GET requests and only work with HTTP Range requests. When detected, this extension downloads those formats in ranged chunks and saves them as a Blob.
 
+URLs that only allow the first range and reject later ranges cannot be saved. The extension rejects them before starting the download.
+
 Some formats may require YouTube-side tokens or streaming protocols that are not directly downloadable as a single file from a browser extension.
 
 If only 360p is shown, check the fetch summary near the bottom of the popup. If `android` or `ios` did not return 720p/1080p, the limitation is likely coming from YouTube's response or a temporary API failure.

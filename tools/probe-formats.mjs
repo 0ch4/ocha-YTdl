@@ -57,11 +57,6 @@ for (const [name, clientHeader, clientVersion, client] of clients) {
       videoId,
       contentCheckOk: true,
       racyCheckOk: true,
-      playbackContext: {
-        contentPlaybackContext: {
-          html5Preference: 'HTML5_PREF_WANTS',
-        },
-      },
     }),
   }).then(resp => resp.json());
 
@@ -74,8 +69,10 @@ for (const [name, clientHeader, clientVersion, client] of clients) {
       `itag=${fmt.itag}`,
       `quality=${fmt.qualityLabel || fmt.audioQuality || '-'}`,
       `mime=${fmt.mimeType || '-'}`,
+      `head=${probe.headStatus}/${probe.headType || '-'}`,
       `status=${probe.status}`,
       `type=${probe.contentType || '-'}`,
+      `next=${probe.nextStatus}/${probe.nextType || '-'}`,
       `sample=${probe.sample}`,
     ].join(' | '));
   }
@@ -102,11 +99,17 @@ function normalizeVideoId(value) {
 
 async function probeUrl(url) {
   try {
+    const head = await fetch(url, { method: 'HEAD' });
     const resp = await fetch(url, { headers: { Range: 'bytes=0-127' } });
+    const nextResp = await fetch(url, { headers: { Range: 'bytes=128-255' } });
     const bytes = new Uint8Array(await resp.arrayBuffer());
     return {
+      headStatus: head.status,
+      headType: head.headers.get('content-type'),
       status: resp.status,
       contentType: resp.headers.get('content-type'),
+      nextStatus: nextResp.status,
+      nextType: nextResp.headers.get('content-type'),
       sample: new TextDecoder('utf-8', { fatal: false })
         .decode(bytes)
         .replace(/[\x00-\x08\x0e-\x1f]/g, '.')
