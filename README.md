@@ -50,6 +50,12 @@ YouTube では 720p/1080p などの高画質フォーマットが、音声なし
 
 360p 以外が表示されない場合は、ポップアップ下部に表示される取得元サマリを確認してください。`android` または `ios` が 720p/1080p を返していない場合、YouTube 側の制限や一時的な API 失敗の可能性があります。
 
+ローカルでフォーマット URL を検証する場合:
+
+```bash
+node tools/probe-formats.mjs https://www.youtube.com/shorts/c504uRvrT-s
+```
+
 ## 同梱している依存ファイル
 
 このリポジトリでは、ビルドなしで拡張機能を読み込めるように `vendor/` 配下へブラウザ向け JavaScript ファイルを同梱しています。

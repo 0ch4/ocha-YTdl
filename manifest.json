@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ocha-YTdl",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "description": "Download YouTube videos — pure JS, no external tools",
   "permissions": [
     "activeTab",
@@ -11,7 +11,8 @@
     "tabs"
   ],
   "host_permissions": [
-    "*://*.youtube.com/*"
+    "*://*.youtube.com/*",
+    "*://*.googlevideo.com/*"
   ],
   "action": {
     "default_popup": "src/popup.html",

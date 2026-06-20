@@ -48,6 +48,12 @@ Some formats may require YouTube-side tokens or streaming protocols that are not
 
 If only 360p is shown, check the fetch summary near the bottom of the popup. If `android` or `ios` did not return 720p/1080p, the limitation is likely coming from YouTube's response or a temporary API failure.
 
+To probe format URLs locally:
+
+```bash
+node tools/probe-formats.mjs https://www.youtube.com/shorts/c504uRvrT-s
+```
+
 ## Vendored code
 
 - `vendor/meriyah.min.js`: Meriyah JavaScript parser.

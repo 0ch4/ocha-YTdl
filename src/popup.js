@@ -942,7 +942,15 @@ function formatAudioOption(fmt) {
   return `${label} / ${buildMeta(fmt)}`;
 }
 
-function downloadFormat(fmt, videoTitle, kind) {
+async function downloadFormat(fmt, videoTitle, kind) {
+  const validation = await validateDownloadUrl(fmt);
+  if (!validation.ok) {
+    const message = `ダウンロードURLが動画/音声ではありません: ${validation.reason}`;
+    console.warn('[ytdl] Refused suspicious download:', message, fmt, validation);
+    alert(message);
+    return;
+  }
+
   chrome.downloads.download({
     url: fmt.url,
     filename: buildFilename(videoTitle, fmt, kind),
@@ -952,6 +960,35 @@ function downloadFormat(fmt, videoTitle, kind) {
       console.warn('[ytdl] Download failed:', chrome.runtime.lastError.message, fmt);
     }
   });
+}
+
+async function validateDownloadUrl(fmt) {
+  try {
+    let resp = await fetch(fmt.url, { method: 'HEAD' });
+    if (!resp.ok || !isExpectedMediaType(resp.headers.get('content-type'), fmt)) {
+      resp = await fetch(fmt.url, { headers: { Range: 'bytes=0-0' } });
+    }
+
+    const contentType = resp.headers.get('content-type') || '';
+    if (!resp.ok && resp.status !== 206) {
+      return { ok: false, reason: `HTTP ${resp.status}`, contentType };
+    }
+
+    if (!isExpectedMediaType(contentType, fmt)) {
+      return { ok: false, reason: `Content-Type ${contentType || 'unknown'}`, contentType };
+    }
+
+    return { ok: true, contentType };
+  } catch (e) {
+    return { ok: false, reason: e.message || String(e) };
+  }
+}
+
+function isExpectedMediaType(contentType, fmt) {
+  const type = (contentType || '').toLowerCase();
+  if (fmt.hasVideo && type.startsWith('video/')) return true;
+  if (fmt.hasAudio && !fmt.hasVideo && type.startsWith('audio/')) return true;
+  return fmt.isMuxed && (type.startsWith('video/') || type.startsWith('audio/'));
 }
 
 function highestVideoHeight(formats) {
@@ -1013,18 +1050,15 @@ function buildItem(fmt, videoTitle) {
     </div>
   `;
 
-  const url = fmt.url;
-  const filename = buildFilename(videoTitle, fmt, fmt.isMuxed ? 'muxed' : fmt.hasVideo ? 'video' : 'audio');
-
   li.querySelector('.copy-btn').addEventListener('click', async () => {
-    await navigator.clipboard.writeText(url);
+    await navigator.clipboard.writeText(fmt.url);
     const btn = li.querySelector('.copy-btn');
     btn.textContent = '✓';
     setTimeout(() => { btn.textContent = 'コピー'; }, 1500);
   });
 
-  li.querySelector('.dl-btn').addEventListener('click', () => {
-    chrome.downloads.download({ url, filename, saveAs: false });
+  li.querySelector('.dl-btn').addEventListener('click', async () => {
+    await downloadFormat(fmt, videoTitle, fmt.isMuxed ? 'muxed' : fmt.hasVideo ? 'video' : 'audio');
   });
 
   return li;
