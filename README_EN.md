@@ -2,6 +2,8 @@
 
 Chrome Manifest V3 extension for inspecting and downloading YouTube video formats from the current tab.
 
+![ocha-YTdl popup sample](docs/images/popup-sample.svg)
+
 ## Features
 
 - Supports regular YouTube watch pages and Shorts URLs.
@@ -40,6 +42,8 @@ The extension is intentionally build-free. All paths in `manifest.json` and HTML
 YouTube commonly serves 720p/1080p as video-only adaptive formats. Downloaded high-resolution files may not include audio.
 
 Some formats may require YouTube-side tokens or streaming protocols that are not directly downloadable as a single file from a browser extension.
+
+If only 360p is shown, check the fetch summary near the bottom of the popup. If `android` or `ios` did not return 720p/1080p, the limitation is likely coming from YouTube's response or a temporary API failure.
 
 ## Vendored code
 

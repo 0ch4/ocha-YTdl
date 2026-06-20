@@ -1,3 +1,5 @@
+const DEFAULT_INNERTUBE_API_KEY = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
+
 document.addEventListener('DOMContentLoaded', async () => {
   const statusEl = document.getElementById('status');
   const errorEl  = document.getElementById('error');
@@ -8,6 +10,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const qualitySelect = document.getElementById('quality-select');
   const downloadSelected = document.getElementById('download-selected');
   const qualityNote = document.getElementById('quality-note');
+  const formatDebug = document.getElementById('format-debug');
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const videoId = extractYouTubeVideoId(tab?.url);
@@ -104,15 +107,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.warn('[ytdl] Watch page fallback failed:', e);
   }
 
-  let apiPlayerResponse = null;
+  let apiPlayerResponse = [];
+  let playerFetchDebug = null;
   try {
     statusEl.textContent = '動画フォーマットを確認中...';
-    apiPlayerResponse = await fetchInnertubePlayerResponses(videoId, pageGlobals?.innertube, statusEl);
+    const fetchResult = await fetchInnertubePlayerResponses(videoId, pageGlobals?.innertube, statusEl);
+    apiPlayerResponse = fetchResult.responses;
+    playerFetchDebug = fetchResult.debug;
   } catch (e) {
     console.warn('[ytdl] Innertube fallback failed:', e.message || e);
+    playerFetchDebug = { errors: [e.message || String(e)], clients: [] };
   }
 
-  const playerResponse = pickBestPlayerResponse([...(apiPlayerResponse ?? []), pageGlobals?.playerResponse]);
+  const playerResponse = pickBestPlayerResponse([...apiPlayerResponse, markPlayerResponseSource(pageGlobals?.playerResponse, 'page')]);
   const playerJsUrl = pageGlobals?.playerJsUrl;
 
   if (!playerResponse?.streamingData) {
@@ -269,6 +276,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         isMuxed,
         hasVideo,
         hasAudio,
+        source: fmt.source ?? null,
         height: fmt.height ?? null, fps: fmt.fps ?? null, bitrate: fmt.bitrate ?? null,
       }];
     } catch (_) { return []; }
@@ -299,6 +307,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     downloadSelected,
     qualityNote
   }, formats);
+  renderFormatDebug(formatDebug, playerFetchDebug, formats);
 
   function showError(msg) {
     statusEl.style.display = 'none';
@@ -478,6 +487,7 @@ function getClientNameHeader(clientName) {
 async function fetchInnertubePlayerResponses(videoId, innertube = {}, statusEl = null) {
   const clients = buildInnertubeClients(innertube);
   const responses = [];
+  const debug = { clients: [], errors: [] };
   const errors = [];
 
   for (const client of clients) {
@@ -485,8 +495,15 @@ async function fetchInnertubePlayerResponses(videoId, innertube = {}, statusEl =
       if (statusEl) statusEl.textContent = `動画フォーマットを確認中... (${client.key})`;
       const response = await fetchInnertubePlayerResponse(videoId, innertube, client);
       responses.push(response);
+      debug.clients.push({
+        key: client.key,
+        status: response.playabilityStatus || 'OK',
+        formats: countRawFormats(response),
+        heights: getRawVideoHeights(response)
+      });
     } catch (e) {
       errors.push(`${client.key}: ${e.message}`);
+      debug.errors.push(`${client.key}: ${e.message}`);
       console.warn(`[ytdl] ${client.key} player API failed:`, e);
     }
   }
@@ -495,7 +512,8 @@ async function fetchInnertubePlayerResponses(videoId, innertube = {}, statusEl =
     throw new Error(errors.join(' / '));
   }
 
-  return responses;
+  console.info('[ytdl] Innertube client summary:', debug);
+  return { responses, debug };
 }
 
 function buildInnertubeClients(innertube = {}) {
@@ -584,13 +602,11 @@ function buildInnertubeClients(innertube = {}) {
 }
 
 async function fetchInnertubePlayerResponse(videoId, innertube = {}, clientConfig) {
-  if (!innertube?.apiKey) {
-    throw new Error('INNERTUBE_API_KEY not found');
-  }
+  const apiKey = innertube?.apiKey || DEFAULT_INNERTUBE_API_KEY;
 
   const context = clientConfig.context;
   const client = context.client || {};
-  const resp = await fetch(`https://www.youtube.com/youtubei/v1/player?key=${encodeURIComponent(innertube.apiKey)}&prettyPrint=false`, {
+  const resp = await fetch(`https://www.youtube.com/youtubei/v1/player?key=${encodeURIComponent(apiKey)}&prettyPrint=false`, {
     method: 'POST',
     credentials: 'include',
     headers: {
@@ -620,10 +636,11 @@ async function fetchInnertubePlayerResponse(videoId, innertube = {}, clientConfi
     throw new Error(data?.playabilityStatus?.reason || 'streamingData not found');
   }
 
-  return {
+  return markPlayerResponseSource({
+    playabilityStatus: data.playabilityStatus?.status || 'OK',
     videoDetails: data.videoDetails ? { title: data.videoDetails.title } : null,
     streamingData: data.streamingData
-  };
+  }, clientConfig.key);
 }
 
 function pickBestPlayerResponse(responses) {
@@ -645,9 +662,31 @@ function pickBestPlayerResponse(responses) {
   };
 }
 
+function markPlayerResponseSource(response, source) {
+  if (!response?.streamingData) return response;
+
+  return {
+    ...response,
+    source,
+    streamingData: {
+      ...response.streamingData,
+      formats: (response.streamingData.formats ?? []).map(fmt => ({ ...fmt, source })),
+      adaptiveFormats: (response.streamingData.adaptiveFormats ?? []).map(fmt => ({ ...fmt, source }))
+    }
+  };
+}
+
 function countRawFormats(response) {
   const sd = response?.streamingData;
   return (sd?.formats?.length ?? 0) + (sd?.adaptiveFormats?.length ?? 0);
+}
+
+function getRawVideoHeights(response) {
+  const sd = response?.streamingData;
+  return [...new Set([...(sd?.formats ?? []), ...(sd?.adaptiveFormats ?? [])]
+    .filter(fmt => fmt.height || fmt.qualityLabel)
+    .map(fmt => fmt.qualityLabel || `${fmt.height}p`))]
+    .sort(compareQualityText);
 }
 
 function dedupeRawFormats(formats) {
@@ -744,6 +783,43 @@ function highestVideoHeight(formats) {
   return formats.reduce((max, fmt) => fmt.hasVideo ? Math.max(max, fmt.height ?? 0) : max, 0);
 }
 
+function renderFormatDebug(el, debug, formats) {
+  if (!el || !debug) return;
+
+  const sourceSummary = Object.entries(groupFormatsBySource(formats))
+    .map(([source, sourceFormats]) => {
+      const heights = [...new Set(sourceFormats
+        .filter(fmt => fmt.hasVideo && fmt.height)
+        .map(fmt => `${fmt.height}p`))]
+        .sort(compareQualityText);
+      return `${source}: ${sourceFormats.length}件${heights.length ? ` (${heights.join(', ')})` : ''}`;
+    });
+
+  const clientSummary = (debug.clients ?? [])
+    .map(client => `${client.key}: ${client.formats}件${client.heights?.length ? ` (${client.heights.join(', ')})` : ''}`);
+
+  const errors = (debug.errors ?? []).slice(0, 3);
+  const lines = [
+    ...clientSummary,
+    ...sourceSummary.map(line => `表示: ${line}`),
+    ...errors.map(line => `失敗: ${line}`)
+  ];
+
+  if (lines.length === 0) return;
+
+  el.textContent = lines.join('\n');
+  el.style.display = highestVideoHeight(formats) <= 360 || errors.length ? 'block' : 'none';
+}
+
+function groupFormatsBySource(formats) {
+  return formats.reduce((groups, fmt) => {
+    const source = fmt.source || 'unknown';
+    groups[source] ??= [];
+    groups[source].push(fmt);
+    return groups;
+  }, {});
+}
+
 function buildItem(fmt, videoTitle) {
   const li = document.createElement('li');
   li.className = 'fmt-item';
@@ -781,6 +857,7 @@ function buildMeta(fmt) {
   const parts = [fmt.ext.toUpperCase()];
   if (fmt.fps)           parts.push(`${fmt.fps}fps`);
   if (fmt.contentLength) parts.push(`${(fmt.contentLength / 1024 / 1024).toFixed(1)} MB`);
+  if (fmt.source)        parts.push(fmt.source);
   return parts.join(' · ');
 }
 
@@ -800,6 +877,10 @@ function compareFormats(a, b) {
     || (b.fps ?? 0) - (a.fps ?? 0)
     || Number(b.isMuxed) - Number(a.isMuxed)
     || (b.bitrate ?? 0) - (a.bitrate ?? 0);
+}
+
+function compareQualityText(a, b) {
+  return parseInt(b, 10) - parseInt(a, 10);
 }
 
 function formatKind(fmt) {

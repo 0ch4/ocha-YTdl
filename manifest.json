@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ocha-YTdl",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Download YouTube videos — pure JS, no external tools",
   "permissions": [
     "activeTab",
