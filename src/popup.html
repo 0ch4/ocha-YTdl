@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>YT Downloader</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    body {
+      width: 360px;
+      margin: 0;
+      padding: 12px 14px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 13px;
+      background: #0f0f0f;
+      color: #e8e8e8;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    header h1 { margin: 0; font-size: 14px; font-weight: 700; color: #ff2222; }
+    #version   { font-size: 10px; color: #555; margin-left: auto; }
+
+    #video-title {
+      font-size: 12px; color: #999;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      margin-bottom: 6px; min-height: 16px;
+    }
+
+    #nsig-status {
+      display: none;
+      font-size: 10px;
+      padding: 3px 7px;
+      border-radius: 3px;
+      margin-bottom: 8px;
+    }
+    .nsig-ok   { background: #0a2a0a; color: #4caf50; }
+    .nsig-fail { background: #2a0a0a; color: #ff6b6b; }
+
+    #status { font-size: 12px; color: #888; padding: 6px 0; }
+    #error  { font-size: 12px; color: #ff6b6b; padding: 6px 0; display: none; }
+
+    #quality-picker {
+      display: none;
+      grid-template-columns: 1fr auto;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    #quality-select {
+      min-width: 0;
+      background: #1a1a1a; color: #e8e8e8;
+      border: 1px solid #333; border-radius: 4px;
+      padding: 6px 7px; font-size: 12px;
+    }
+    #download-selected {
+      background: #cc0000; color: #fff;
+      border: none; border-radius: 4px;
+      padding: 6px 12px; font-size: 12px; font-weight: 600; cursor: pointer;
+    }
+    #download-selected:hover { background: #ff2222; }
+    #quality-note {
+      display: none;
+      color: #888;
+      font-size: 10px;
+      line-height: 1.35;
+      margin: -3px 0 8px;
+    }
+
+    .section       { display: none; margin-bottom: 10px; }
+    .section-label {
+      font-size: 10px; font-weight: 600; color: #666;
+      text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 5px;
+    }
+    .fmt-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+
+    .fmt-item {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 7px 10px;
+      background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 5px;
+      transition: background 0.1s;
+    }
+    .fmt-item:hover { background: #222; }
+
+    .fmt-left    { display: flex; flex-direction: column; gap: 2px; }
+    .fmt-quality { font-weight: 600; font-size: 13px; }
+    .fmt-meta    { font-size: 10px; color: #666; }
+
+    .fmt-actions { display: flex; gap: 5px; flex-shrink: 0; }
+
+    .copy-btn {
+      background: #2a2a2a; color: #aaa;
+      border: 1px solid #3a3a3a; border-radius: 3px;
+      padding: 4px 8px; font-size: 10px; cursor: pointer;
+      transition: background 0.1s;
+    }
+    .copy-btn:hover { background: #333; color: #fff; }
+
+    .dl-btn {
+      background: #cc0000; color: #fff;
+      border: none; border-radius: 3px;
+      padding: 4px 12px; font-size: 11px; font-weight: 600; cursor: pointer;
+      transition: background 0.1s;
+    }
+    .dl-btn:hover  { background: #ff2222; }
+    .dl-btn:active { background: #aa0000; }
+
+    hr.divider { border: none; border-top: 1px solid #1e1e1e; margin: 8px 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>ocha-YTdl</h1>
+    <span id="version">v0.3.3</span>
+  </header>
+
+  <div id="video-title"></div>
+  <div id="nsig-status"></div>
+  <div id="status">読み込み中...</div>
+  <div id="error"></div>
+
+  <div id="quality-picker">
+    <select id="quality-select" aria-label="画質"></select>
+    <button id="download-selected">DL</button>
+  </div>
+  <div id="quality-note"></div>
+
+  <div class="section" id="section-muxed">
+    <div class="section-label">動画 + 音声</div>
+    <ul class="fmt-list" id="list-muxed"></ul>
+  </div>
+
+  <hr class="divider" id="divider-video" style="display:none">
+  <div class="section" id="section-video">
+    <div class="section-label">映像のみ</div>
+    <ul class="fmt-list" id="list-video"></ul>
+  </div>
+
+  <hr class="divider" id="divider-audio" style="display:none">
+  <div class="section" id="section-audio">
+    <div class="section-label">音声のみ</div>
+    <ul class="fmt-list" id="list-audio"></ul>
+  </div>
+
+  <iframe id="solver-iframe" src="../sandbox/solver.html" style="display:none"></iframe>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+.DS_Store
+Thumbs.db
+
+# Local editor state
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local packaging output
+dist/
+*.zip
+*.crx
+*.pem
+
+# Logs
+*.log

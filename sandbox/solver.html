@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="../vendor/meriyah.min.js"></script>
+  <script src="../vendor/astring.min.js"></script>
+  <script src="../vendor/yt.solver.core.js"></script>
+  <script>
+    window.addEventListener('message', function (event) {
+      var data = event.data;
+      if (data && data.action === 'ping') {
+        event.source.postMessage({ action: 'pong' }, event.origin || '*');
+        return;
+      }
+      if (data && data.action === 'decrypt') {
+        try {
+          var playerJs = data.playerJs;
+          var nValues = data.nValues || [];
+          var sigValues = data.sigValues || [];
+          
+          var requests = [];
+          if (nValues.length > 0) {
+            requests.push({ type: 'n', challenges: nValues });
+          }
+          if (sigValues.length > 0) {
+            requests.push({ type: 'sig', challenges: sigValues });
+          }
+
+          var result = jsc({
+            type: 'player',
+            player: playerJs,
+            requests: requests
+          });
+
+          var nMap = {};
+          var sigMap = {};
+          if (result.type === 'result') {
+            for (var i = 0; i < requests.length; i++) {
+              var reqType = requests[i].type;
+              var resp = result.responses[i];
+              if (resp && resp.type === 'result') {
+                if (reqType === 'n') {
+                  nMap = resp.data;
+                } else if (reqType === 'sig') {
+                  sigMap = resp.data;
+                }
+              } else if (resp && resp.type === 'error') {
+                throw new Error(resp.error);
+              }
+            }
+          }
+          
+          event.source.postMessage({
+            action: 'decryptResult',
+            success: true,
+            nMap: nMap,
+            sigMap: sigMap
+          }, event.origin);
+        } catch (err) {
+          event.source.postMessage({
+            action: 'decryptResult',
+            success: false,
+            error: err.message
+          }, event.origin);
+        }
+      }
+    });
+  </script>
+</head>
+<body>
+</body>
+</html>
