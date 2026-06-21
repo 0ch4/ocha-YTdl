@@ -5,6 +5,7 @@ YouTube の現在開いている動画ページから、利用可能な動画/�
 English README: [README_EN.md](README_EN.md)
 
 ![ocha-YTdl popup sample](docs/images/popup-sample.svg)
+サンプル画像は `tools/generate-popup-sample.mjs` で生成します。
 
 ## 機能
 

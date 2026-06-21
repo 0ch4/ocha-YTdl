@@ -1,4 +1,42 @@
-<?xml version="1.0" encoding="UTF-8"?>
+import { readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+
+const ROOT = process.cwd();
+const MANIFEST_PATH = path.join(ROOT, 'manifest.json');
+const OUT_PATH = path.join(ROOT, 'docs/images/popup-sample.svg');
+const args = new Map(process.argv.slice(2).flatMap(arg => {
+  const idx = arg.indexOf('=');
+  return idx === -1 ? [[arg, true]] : [[arg.slice(0, idx), arg.slice(idx + 1)]];
+}));
+
+const manifest = await readJson(MANIFEST_PATH);
+const version = String(args.get('--version') || manifest.version || '0.0.0').replace(/^v/i, '');
+const title = String(args.get('--title') || 'Sample YouTube Shorts Video');
+
+const svg = renderSvg({
+  version,
+  title,
+  duration: '9:41',
+  badge: 'status: 最新',
+  badgeColor: '#2196f3',
+  badgeTextColor: '#e8f4ff',
+  maintenanceText: '同梱ロジックは最新互換性メタと同期しています',
+  titleLine2: 'Shorts / 1080p / 30fps',
+  thumbLabel: 'SHORTS',
+  formatSummary: '表示: ios: 12件 (360p, 720p, 1080p)',
+  note: '合成中...（ウィンドウを閉じないでください）'
+});
+
+await writeFile(OUT_PATH, svg);
+console.log(`Updated ${path.relative(ROOT, OUT_PATH)}`);
+
+async function readJson(file) {
+  return JSON.parse(await readFile(file, 'utf8'));
+}
+
+function renderSvg(data) {
+  const esc = escapeXml;
+  return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="640" viewBox="0 0 960 640" role="img" aria-label="ocha-YTdl popup sample">
   <defs>
     <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
@@ -33,25 +71,25 @@
     <text x="252" y="90" fill="#ff2222" font-size="26" font-weight="700">ocha-YTdl</text>
     <g transform="translate(548 66)">
       <rect x="0" y="0" width="136" height="26" rx="13" fill="#101f2e" stroke="#1f3d59"/>
-      <circle cx="13" cy="13" r="5" fill="#2196f3"/>
-      <text x="28" y="18" fill="#e8f4ff" font-size="12" font-weight="700">status: 最新</text>
+      <circle cx="13" cy="13" r="5" fill="${esc(data.badgeColor)}"/>
+      <text x="28" y="18" fill="${esc(data.badgeTextColor)}" font-size="12" font-weight="700">${esc(data.badge)}</text>
     </g>
-    <text x="704" y="88" fill="#666" font-size="12" text-anchor="end">v0.8.0</text>
+    <text x="704" y="88" fill="#666" font-size="12" text-anchor="end">v${esc(data.version)}</text>
 
     <g transform="translate(252 112)">
       <rect x="0" y="0" width="456" height="178" rx="16" fill="#161616" stroke="#2b2b2b" filter="url(#softShadow)"/>
       <rect x="14" y="14" width="250" height="150" rx="14" fill="url(#thumb)"/>
       <rect x="28" y="22" width="70" height="22" rx="11" fill="rgba(0,0,0,0.55)"/>
-      <text x="63" y="37" fill="#fff" font-size="11" font-weight="700" text-anchor="middle">SHORTS</text>
+      <text x="63" y="37" fill="#fff" font-size="11" font-weight="700" text-anchor="middle">${esc(data.thumbLabel)}</text>
       <rect x="14" y="132" width="250" height="32" rx="0" fill="rgba(0,0,0,0.28)"/>
       <rect x="14" y="160" width="250" height="5" rx="2.5" fill="rgba(255,255,255,0.18)"/>
       <rect x="14" y="160" width="170" height="5" rx="2.5" fill="#ff2222"/>
       <path d="M118 76 L118 120 L152 98 Z" fill="#fff" opacity="0.95"/>
       <rect x="206" y="142" width="46" height="20" rx="4" fill="rgba(0,0,0,0.76)"/>
-      <text x="229" y="156" fill="#fff" font-size="11" font-weight="700" text-anchor="middle">9:41</text>
+      <text x="229" y="156" fill="#fff" font-size="11" font-weight="700" text-anchor="middle">${esc(data.duration)}</text>
       <g transform="translate(280 20)">
-        <text x="0" y="0" fill="#f2f2f2" font-size="18" font-weight="700">Sample YouTube Shorts Video</text>
-        <text x="0" y="27" fill="#a6a6a6" font-size="12">Shorts / 1080p / 30fps</text>
+        <text x="0" y="0" fill="#f2f2f2" font-size="18" font-weight="700">${esc(data.title)}</text>
+        <text x="0" y="27" fill="#a6a6a6" font-size="12">${esc(data.titleLine2)}</text>
         <g transform="translate(0 48)">
           <rect x="0" y="0" width="138" height="24" rx="12" fill="#202020" stroke="#333"/>
           <text x="18" y="16" fill="#e5e5e5" font-size="11" font-weight="700">Shorts</text>
@@ -86,9 +124,20 @@
       <text x="374" y="22" fill="#fff" font-size="12" font-weight="700" text-anchor="middle">両方DL</text>
       <rect x="0" y="46" width="456" height="40" rx="10" fill="#1565c0"/>
       <text x="228" y="71" fill="#fff" font-size="13" font-weight="700" text-anchor="middle">映像+音声を合成して保存</text>
-      <text x="0" y="116" fill="#4caf50" font-size="11">合成中...（ウィンドウを閉じないでください）</text>
-      <text x="0" y="140" fill="#777" font-size="10">表示: ios: 12件 (360p, 720p, 1080p)</text>
-      <text x="0" y="164" fill="#64b5f6" font-size="10">同梱ロジックは最新互換性メタと同期しています</text>
+      <text x="0" y="116" fill="#4caf50" font-size="11">${esc(data.note)}</text>
+      <text x="0" y="140" fill="#777" font-size="10">${esc(data.formatSummary)}</text>
+      <text x="0" y="164" fill="#64b5f6" font-size="10">${esc(data.maintenanceText)}</text>
     </g>
   </g>
 </svg>
+`;
+}
+
+function escapeXml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}

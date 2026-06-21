@@ -1,0 +1,53 @@
+name: Generate popup sample
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '15 19 * * 0'
+  push:
+    paths:
+      - 'manifest.json'
+      - 'src/**/*.js'
+      - 'src/**/*.html'
+      - 'src/config/**/*.js'
+      - 'README.md'
+      - 'README_EN.md'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Generate popup sample SVG
+        run: node tools/generate-popup-sample.mjs
+
+      - name: Create pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet -- docs/images/popup-sample.svg; then
+            echo "No changes"
+            exit 0
+          fi
+
+          branch="bot/popup-sample-${GITHUB_RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add docs/images/popup-sample.svg
+          git commit -m "Update popup sample SVG"
+          git push origin "$branch"
+          gh pr create \
+            --title "Update popup sample SVG" \
+            --body "Regenerated the README popup sample from the current extension UI sources." \
+            --base main \
+            --head "$branch"

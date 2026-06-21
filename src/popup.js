@@ -10,6 +10,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const statusEl = document.getElementById('status');
   const errorEl  = document.getElementById('error');
   const titleEl  = document.getElementById('video-title');
+  const versionEl = document.getElementById('version');
   const thumbEl  = document.getElementById('video-thumb');
   const durationEl = document.getElementById('video-duration');
   const sourceChipEl = document.getElementById('video-source-chip');
@@ -37,6 +38,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     downloadMux: document.getElementById('download-mux-selected'),
     qualityNote
   };
+
+  if (versionEl) {
+    versionEl.textContent = `v${chrome.runtime.getManifest().version}`;
+  }
 
   updateGuideBtn?.addEventListener('click', () => {
     chrome.tabs.create({ url: UPDATE_GUIDE_URL });
