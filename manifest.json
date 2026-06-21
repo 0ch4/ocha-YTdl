@@ -1,18 +1,20 @@
 {
   "manifest_version": 3,
   "name": "ocha-YTdl",
-  "version": "0.3.11",
+  "version": "0.7.1",
   "description": "Download YouTube videos — pure JS, no external tools",
   "permissions": [
     "activeTab",
     "downloads",
     "scripting",
     "storage",
-    "tabs"
+    "tabs",
+    "webRequest"
   ],
   "host_permissions": [
     "*://*.youtube.com/*",
-    "*://*.googlevideo.com/*"
+    "*://*.googlevideo.com/*",
+    "https://jnn-pa.googleapis.com/*"
   ],
   "action": {
     "default_popup": "src/popup.html",
@@ -22,6 +24,6 @@
     "service_worker": "src/background.js"
   },
   "sandbox": {
-    "pages": ["sandbox/solver.html"]
+    "pages": ["sandbox/solver.html", "sandbox/muxer.html", "sandbox/potgen.html"]
   }
 }

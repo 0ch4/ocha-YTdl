@@ -1,5 +1,5 @@
 const DEFAULT_INNERTUBE_API_KEY = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
-const RANGE_CHUNK_SIZE = 128 * 1024;
+const RANGE_CHUNK_SIZE = 10 << 20; // 10MB — matches yt-dlp's CHUNK_SIZE
 
 document.addEventListener('DOMContentLoaded', async () => {
   const statusEl = document.getElementById('status');
@@ -20,11 +20,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     downloadVideo: document.getElementById('download-video-selected'),
     downloadAudio: document.getElementById('download-audio-selected'),
     downloadPair: document.getElementById('download-pair-selected'),
+    downloadMux: document.getElementById('download-mux-selected'),
     qualityNote
   };
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const videoId = extractYouTubeVideoId(tab?.url);
+  _tabId = tab?.id ?? null; // PO Token をページMAIN worldで生成するのに使う
 
   if (!isYoutubeUrl(tab?.url)) {
     statusEl.textContent = 'YouTubeを開いてください';
@@ -98,7 +100,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             context: ytcfgData.INNERTUBE_CONTEXT || null,
             clientName: ytcfgData.INNERTUBE_CONTEXT_CLIENT_NAME || null,
             clientVersion: ytcfgData.INNERTUBE_CLIENT_VERSION || ytcfgData.INNERTUBE_CONTEXT?.client?.clientVersion || null,
-            visitorData: ytcfgData.VISITOR_DATA || ytcfgData.INNERTUBE_CONTEXT?.client?.visitorData || null
+            visitorData: ytcfgData.VISITOR_DATA || ytcfgData.INNERTUBE_CONTEXT?.client?.visitorData || null,
+            sts: ytcfgData.STS || ytcfgData.SIGNATURE_TIMESTAMP || null
           }
         };
       }
@@ -118,11 +121,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.warn('[ytdl] Watch page fallback failed:', e);
   }
 
+  _visitorData = pageGlobals?.innertube?.visitorData || null;
+  _videoId = videoId;
+  // PO Token は事前生成しない（tv経路は signatureTimestamp + Cookie で pot不要）。
+  // 実際に 20MB超のDLで 403 になった時だけ遅延生成する（fetchRange 内）。
+
   let apiPlayerResponse = [];
   let playerFetchDebug = null;
   try {
     statusEl.textContent = '動画フォーマットを確認中...';
-    const fetchResult = await fetchInnertubePlayerResponses(videoId, pageGlobals?.innertube, statusEl, tab.id);
+    const fetchResult = await fetchInnertubePlayerResponses(videoId, pageGlobals?.innertube, statusEl, tab.id, _pot);
     apiPlayerResponse = fetchResult.responses;
     playerFetchDebug = fetchResult.debug;
   } catch (e) {
@@ -280,6 +288,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const isMuxed = muxedItags.has(fmt.itag);
       const hasVideo = mime.startsWith('video/') || Boolean(fmt.width || fmt.height);
       const hasAudio = mime.startsWith('audio/') || isMuxed || Boolean(fmt.audioQuality);
+      const audio = hasAudio && !hasVideo ? parseAudioMeta(fmt, url) : {};
       return [{
         itag: fmt.itag, url,
         quality: formatQualityLabel(fmt),
@@ -289,7 +298,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         hasVideo,
         hasAudio,
         source: fmt.source ?? null,
+        potFree: isPotFreeSource(fmt.source),
         height: fmt.height ?? null, fps: fmt.fps ?? null, bitrate: fmt.bitrate ?? null,
+        ...audio,
       }];
     } catch (_) {
       resolveStats.failed++;
@@ -308,6 +319,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   nSigEl.textContent = nSigOk ? '✓ シグネチャ: 復号OK' : `✗ シグネチャ: 失敗 — ${nSigError ?? ''}`;
   nSigEl.className   = nSigOk ? 'nsig-ok' : 'nsig-fail';
   nSigEl.style.display = 'block';
+
+  // PO Token の捕獲状況（無いと20MB超のDLが失敗する）
+  // PO Token は遅延生成（必要時のみ）なので起動時は表示しない。
+  const potEl = document.getElementById('pot-status');
+  if (potEl) potEl.style.display = 'none';
 
   const muxed     = formats.filter(f => f.isMuxed);
   const videoOnly = formats.filter(f => f.hasVideo && !f.isMuxed);
@@ -489,12 +505,20 @@ function getClientNameHeader(clientName) {
   if (clientName === 'WEB_EMBEDDED_PLAYER') return '56';
   if (clientName === 'WEB_REMIX') return '67';
   if (clientName === 'ANDROID') return '3';
+  if (clientName === 'ANDROID_VR') return '28';
   if (clientName === 'IOS') return '5';
   if (clientName === 'TVHTML5') return '7';
   return '1';
 }
 
-async function fetchInnertubePlayerResponses(videoId, innertube = {}, statusEl = null, tabId = null) {
+// yt-dlp が pot 無しで使う既定クライアント = GVS_PO_TOKEN_POLICY 未定義のもの。
+// これらのソース由来の直URLは PO Token 不要で20MBの壁を越えられる。
+const POT_FREE_SOURCES = new Set(['android_vr', 'tv', 'tv_downgraded']);
+function isPotFreeSource(source) {
+  return POT_FREE_SOURCES.has(source);
+}
+
+async function fetchInnertubePlayerResponses(videoId, innertube = {}, statusEl = null, tabId = null, pot = null) {
   const clients = buildInnertubeClients(innertube);
   const responses = [];
   const debug = { clients: [], errors: [] };
@@ -503,7 +527,7 @@ async function fetchInnertubePlayerResponses(videoId, innertube = {}, statusEl =
   for (const client of clients) {
     try {
       if (statusEl) statusEl.textContent = `動画フォーマットを確認中... (${client.key})`;
-      const response = await fetchInnertubePlayerResponse(videoId, innertube, client, tabId);
+      const response = await fetchInnertubePlayerResponse(videoId, innertube, client, tabId, pot);
       responses.push(response);
       debug.clients.push({
         key: client.key,
@@ -540,12 +564,9 @@ function buildInnertubeClients(innertube = {}) {
   };
 
   return [
-    {
-      key: 'page_web',
-      context: pageContext,
-      clientName: innertube.clientName || pageClient?.clientName || 'WEB',
-      clientVersion: innertube.clientVersion || pageClient?.clientVersion || '2.20260114.08.00'
-    },
+    // tv系(TVHTML5)= 直URLを返す WebPO クライアント。GVSはpot不要ポリシー＝20MBの壁なし。
+    // yt-dlp は tv に player pot を送らず Cookie のみで使う（認証時の既定は tv_downgraded）。
+    // → potは送らずログインCookieで叩く。これが本命の高解像度経路。
     {
       key: 'tv',
       context: {
@@ -553,11 +574,34 @@ function buildInnertubeClients(innertube = {}) {
           clientName: 'TVHTML5',
           clientVersion: '7.20260114.12.00',
           hl: 'ja',
-          gl: 'JP'
+          gl: 'JP',
+          visitorData: innertube.visitorData || undefined
         }
       },
       clientName: 'TVHTML5',
       clientVersion: '7.20260114.12.00'
+    },
+    {
+      key: 'tv_downgraded',
+      context: {
+        client: {
+          clientName: 'TVHTML5',
+          clientVersion: '5.20260114',
+          userAgent: 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version',
+          hl: 'ja',
+          gl: 'JP',
+          visitorData: innertube.visitorData || undefined
+        }
+      },
+      clientName: 'TVHTML5',
+      clientVersion: '5.20260114'
+    },
+    {
+      key: 'page_web',
+      context: pageContext,
+      clientName: innertube.clientName || pageClient?.clientName || 'WEB',
+      clientVersion: innertube.clientVersion || pageClient?.clientVersion || '2.20260114.08.00',
+      usePlayerPot: true
     },
     {
       key: 'android',
@@ -607,22 +651,26 @@ function buildInnertubeClients(innertube = {}) {
         }
       },
       clientName: 'WEB',
-      clientVersion: innertube.clientVersion || pageClient?.clientVersion || '2.20260114.08.00'
+      clientVersion: innertube.clientVersion || pageClient?.clientVersion || '2.20260114.08.00',
+      usePlayerPot: true
     }
   ];
 }
 
-async function fetchInnertubePlayerResponse(videoId, innertube = {}, clientConfig, tabId = null) {
+async function fetchInnertubePlayerResponse(videoId, innertube = {}, clientConfig, tabId = null, pot = null) {
   const apiKey = innertube?.apiKey || DEFAULT_INNERTUBE_API_KEY;
 
   const context = clientConfig.context;
   const client = context.client || {};
 
+  const sts = innertube?.sts || null;
+  const visitorData = innertube?.visitorData || client.visitorData || null;
+
   let data;
   if (tabId) {
-    data = await fetchInnertubePlayerInPage(tabId, videoId, apiKey, clientConfig, getClientNameHeader(clientConfig.clientName || client.clientName));
+    data = await fetchInnertubePlayerInPage(tabId, videoId, apiKey, clientConfig, getClientNameHeader(clientConfig.clientName || client.clientName), pot, sts, visitorData);
   } else {
-    data = await fetchInnertubePlayerFromExtension(videoId, apiKey, clientConfig, context, client);
+    data = await fetchInnertubePlayerFromExtension(videoId, apiKey, clientConfig, context, client, pot, sts, visitorData);
   }
 
   if (!data?.streamingData) {
@@ -636,30 +684,39 @@ async function fetchInnertubePlayerResponse(videoId, innertube = {}, clientConfi
   }, clientConfig.key);
 }
 
-async function fetchInnertubePlayerInPage(tabId, videoId, apiKey, clientConfig, clientNameHeader) {
+async function fetchInnertubePlayerInPage(tabId, videoId, apiKey, clientConfig, clientNameHeader, pot = null, sts = null, visitorData = null) {
   const [result] = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
-    args: [videoId, apiKey, clientConfig, clientNameHeader],
-    func: async (videoId, apiKey, clientConfig, clientNameHeader) => {
+    args: [videoId, apiKey, clientConfig, clientNameHeader, pot, sts, visitorData],
+    func: async (videoId, apiKey, clientConfig, clientNameHeader, pot, sts, visitorData) => {
       const context = clientConfig.context;
       const client = context.client || {};
 
       try {
+        const reqBody = { context, videoId, contentCheckOk: true, racyCheckOk: true };
+        // JSプレーヤー系クライアント(TVHTML5/WEB)は signatureTimestamp 必須 → playbackContext を付与
+        reqBody.playbackContext = {
+          contentPlaybackContext: Object.assign(
+            { html5Preference: 'HTML5_PREF_WANTS' },
+            sts ? { signatureTimestamp: sts } : {}
+          )
+        };
+        // WebPO クライアント(tv等)には player pot を付与 → bot検問突破＆GVS pot不要化
+        if (pot && clientConfig.usePlayerPot) {
+          reqBody.serviceIntegrityDimensions = { poToken: pot };
+        }
+        const headers = {
+          'Content-Type': 'application/json',
+          'X-YouTube-Client-Name': String(clientNameHeader),
+          'X-YouTube-Client-Version': String(clientConfig.clientVersion || client.clientVersion || '')
+        };
+        if (visitorData) headers['X-Goog-Visitor-Id'] = visitorData;
         const resp = await fetch(`https://www.youtube.com/youtubei/v1/player?key=${encodeURIComponent(apiKey)}&prettyPrint=false`, {
           method: 'POST',
           credentials: 'include',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-YouTube-Client-Name': String(clientNameHeader),
-            'X-YouTube-Client-Version': String(clientConfig.clientVersion || client.clientVersion || '')
-          },
-          body: JSON.stringify({
-            context,
-            videoId,
-            contentCheckOk: true,
-            racyCheckOk: true
-          })
+          headers,
+          body: JSON.stringify(reqBody)
         });
 
         const text = await resp.text();
@@ -687,21 +744,28 @@ async function fetchInnertubePlayerInPage(tabId, videoId, apiKey, clientConfig, 
   return data;
 }
 
-async function fetchInnertubePlayerFromExtension(videoId, apiKey, clientConfig, context, client) {
+async function fetchInnertubePlayerFromExtension(videoId, apiKey, clientConfig, context, client, pot = null, sts = null, visitorData = null) {
+  const reqBody = { context, videoId, contentCheckOk: true, racyCheckOk: true };
+  reqBody.playbackContext = {
+    contentPlaybackContext: Object.assign(
+      { html5Preference: 'HTML5_PREF_WANTS' },
+      sts ? { signatureTimestamp: sts } : {}
+    )
+  };
+  if (pot && clientConfig.usePlayerPot) {
+    reqBody.serviceIntegrityDimensions = { poToken: pot };
+  }
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-YouTube-Client-Name': getClientNameHeader(clientConfig.clientName || client.clientName),
+    'X-YouTube-Client-Version': String(clientConfig.clientVersion || client.clientVersion || '')
+  };
+  if (visitorData) headers['X-Goog-Visitor-Id'] = visitorData;
   const resp = await fetch(`https://www.youtube.com/youtubei/v1/player?key=${encodeURIComponent(apiKey)}&prettyPrint=false`, {
     method: 'POST',
     credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-YouTube-Client-Name': getClientNameHeader(clientConfig.clientName || client.clientName),
-      'X-YouTube-Client-Version': String(clientConfig.clientVersion || client.clientVersion || '')
-    },
-    body: JSON.stringify({
-      context,
-      videoId,
-      contentCheckOk: true,
-      racyCheckOk: true
-    })
+    headers,
+    body: JSON.stringify(reqBody)
   });
 
   if (!resp.ok) {
@@ -779,7 +843,9 @@ function dedupeRawFormats(formats) {
       fmt.qualityLabel,
       fmt.height,
       fmt.fps,
-      fmt.audioQuality
+      fmt.audioQuality,
+      fmt.audioTrack?.id ?? '',   // 言語トラックを別物として扱う（吹替/オリジナル）
+      fmt.isDrc ? 'drc' : ''
     ].join(':');
     const current = byKey.get(key);
 
@@ -792,7 +858,8 @@ function dedupeRawFormats(formats) {
 }
 
 function rawFormatScore(fmt) {
-  return (fmt.url ? 8 : 0)
+  return (isPotFreeSource(fmt.source) ? 32 : 0)   // pot不要ソースの直URLを最優先（20MBの壁回避）
+    + (fmt.url ? 8 : 0)
     + (fmt.signatureCipher || fmt.cipher ? 4 : 0)
     + (fmt.contentLength ? 2 : 0)
     + (fmt.bitrate ? 1 : 0);
@@ -845,6 +912,7 @@ function renderFormatPicker(formats, videoTitle, els) {
     els.downloadVideo.disabled = !video;
     els.downloadAudio.disabled = !audio;
     els.downloadPair.disabled = !video && !audio;
+    if (els.downloadMux) els.downloadMux.disabled = !(video && audio) || !!video.isMuxed;
 
     if (!els.qualityNote) return;
 
@@ -889,6 +957,12 @@ function renderFormatPicker(formats, videoTitle, els) {
     if (audio && !video?.isMuxed) downloadFormat(audio, videoTitle, 'audio');
   });
 
+  els.downloadMux.addEventListener('click', () => {
+    const video = getSelectedFormat(els.videoSelect);
+    const audio = getSelectedFormat(els.audioSelect);
+    muxAndDownload(video, audio, videoTitle, els);
+  });
+
   els.qualityPicker.style.display = 'grid';
   updatePickerState();
 }
@@ -928,139 +1002,482 @@ function formatVideoOption(fmt) {
   return parts.filter(Boolean).join(' / ');
 }
 
+// YouTube はオートダビング等で1動画に複数言語の音声トラックを持つ。
+// オリジナル音声を見分けるため audioTrack と URL の xtags(acont) を解析する。
+// acont は locale 非依存の信号: original / dubbed-auto / dubbed / descriptive
+function parseAudioMeta(rawFmt, resolvedUrl) {
+  const at = rawFmt.audioTrack || {};
+  const displayName = at.displayName || '';
+  const language = (at.id || '').split('.')[0] || null;
+
+  let acont = null;
+  try {
+    const xtags = new URL(resolvedUrl).searchParams.get('xtags');
+    const m = xtags && /(?:^|[:&;,])acont=([^:&;,]+)/.exec(xtags);
+    if (m) acont = m[1];
+  } catch (_) {}
+
+  const dn = displayName.toLowerCase();
+  const isDescriptive = acont === 'descriptive' || dn.includes('descriptive');
+  const isOriginalAudio = acont === 'original' || (!acont && dn.includes('original'));
+  const isDubbed = /^dubbed/.test(acont || '') || (!isOriginalAudio && !isDescriptive && /dub/.test(dn));
+
+  return {
+    audioTrackId: at.id || null,
+    audioTrackName: displayName || null,
+    language,
+    audioContent: acont,
+    isOriginalAudio,
+    isDefaultAudio: !!at.audioIsDefault,
+    isDescriptive,
+    isDubbed,
+  };
+}
+
+// 並び順の優先度（大きいほど上）: オリジナル > 通常 > デフォルト吹替 > 自動吹替 > 説明音声
+function audioTrackRank(fmt) {
+  if (fmt.isDescriptive) return -10;
+  if (fmt.isOriginalAudio) return 10;
+  if (fmt.isDubbed) return fmt.isDefaultAudio ? -1 : -2;
+  return 0;
+}
+
+function audioTrackLabel(fmt) {
+  if (!fmt.audioTrackName && !fmt.language) return '';
+  let tag = fmt.audioTrackName || fmt.language || '';
+  if (fmt.isOriginalAudio) tag += ' [原]';
+  else if (fmt.isDescriptive) tag += ' [説明]';
+  else if (fmt.isDubbed) tag += ' [吹替]';
+  return tag.trim();
+}
+
 function formatAudioOption(fmt) {
   const label = fmt.quality || 'audio';
-  return `${label} / ${buildMeta(fmt)}`;
+  const track = audioTrackLabel(fmt);
+  return [track, label, buildMeta(fmt)].filter(Boolean).join(' / ');
 }
 
 async function downloadFormat(fmt, videoTitle, kind) {
   try {
-    const validation = await validateDownloadUrl(fmt);
-    if (!validation.ok) {
-      const message = `ダウンロードURLが動画/音声ではありません: ${validation.reason}`;
-      console.warn('[ytdl] Refused suspicious download:', message, fmt, validation);
-      alert(message);
-      return;
-    }
-
     const filename = buildFilename(videoTitle, fmt, kind);
-    if (validation.requiresRange) {
-      await downloadWithRange(fmt, filename, validation);
+
+    // progressive/muxed (itag18 等) は素のGETに応答するので直DLでOK
+    if (fmt.isMuxed) {
+      chrome.downloads.download({ url: fmt.url, filename, saveAs: false }, () => {
+        if (chrome.runtime.lastError) {
+          console.warn('[ytdl] Download failed:', chrome.runtime.lastError.message, fmt);
+        }
+      });
       return;
     }
 
-    chrome.downloads.download({
-      url: fmt.url,
-      filename,
-      saveAs: false
-    }, () => {
+    // adaptive(DASH) は部分レンジ必須（Rangeなし or 全体レンジは403）→ チャンクDL
+    const label = kind === 'audio' ? '音声' : '映像';
+    setMuxProgress(`${label}をダウンロード中...`);
+    const bytes = await fetchFormatBytes(fmt, p => setMuxProgress(`${label}DL中... ${p}%`));
+    clearMuxProgress();
+
+    const blob = new Blob([bytes], { type: fmt.mimeType || 'application/octet-stream' });
+    const blobUrl = URL.createObjectURL(blob);
+    chrome.downloads.download({ url: blobUrl, filename, saveAs: false }, () => {
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 120000);
       if (chrome.runtime.lastError) {
-        console.warn('[ytdl] Download failed:', chrome.runtime.lastError.message, fmt);
+        console.warn('[ytdl] Blob download failed:', chrome.runtime.lastError.message, fmt);
       }
     });
   } catch (e) {
+    clearMuxProgress();
     console.warn('[ytdl] Download failed:', e, fmt);
     alert(`ダウンロードに失敗しました: ${e.message || e}`);
   }
 }
 
-async function validateDownloadUrl(fmt) {
-  try {
-    let resp = await fetch(fmt.url, { method: 'HEAD' });
-    const headOk = resp.ok && isExpectedMediaType(resp.headers.get('content-type'), fmt);
-    if (!headOk) {
-      resp = await fetch(fmt.url, { headers: { Range: 'bytes=0-0' } });
+// ─── chunked range download ─────────────────────────────────────────────────
+// gvs の adaptive URL は「厳密な部分レンジ」のみ200を返す。Rangeなしも全体レンジも403。
+// yt-dlp と同じく URL末尾に &range=START-END を付けた10MBチャンクで取得する。
+// 403/429 はレート制限なので、リクエストを増やさず指数バックオフで再試行する
+// （以前の「半分割リトライ」はリクエスト数を増やして制限を悪化させるため廃止）。
+
+// PO Token 取得の唯一の差し替え点。
+// これが無いと pot必須クライアントの adaptive は20MB以降が403になる。
+//
+// 【将来】自前サーバで pot provider を動かす場合は POT_PROVIDER_URL を設定するだけ。
+//   サーバは content_binding(visitorData) を受け取り {po_token} を返す
+//   （bgutil-ytdlp-pot-provider 互換のJSON）。
+// 【現状】ページが生成した pot を background.js が横取りして storage.session に保存。
+const POT_PROVIDER_URL = null; // 例: 'https://your-server.example/get_pot'
+
+let _pot = null;
+let _visitorData = null;
+let _videoId = null;
+let _tabId = null;
+let _lastPotError = null; // 直近のPO Token生成失敗理由（UIに表示する）
+
+async function ensurePot() {
+  if (_pot) return _pot;
+
+  // 1) 将来: 自前サーバの pot provider
+  if (POT_PROVIDER_URL) {
+    try {
+      const r = await fetch(POT_PROVIDER_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content_binding: _visitorData })
+      });
+      const j = await r.json();
+      if (j && j.po_token) { _pot = j.po_token; return _pot; }
+    } catch (e) {
+      console.warn('[ytdl] pot provider failed:', e);
     }
-
-    const contentType = resp.headers.get('content-type') || '';
-    if (!resp.ok && resp.status !== 206) {
-      return { ok: false, reason: `HTTP ${resp.status}`, contentType };
-    }
-
-    if (!isExpectedMediaType(contentType, fmt)) {
-      return { ok: false, reason: `Content-Type ${contentType || 'unknown'}`, contentType };
-    }
-
-    const totalBytes = parseTotalBytes(resp.headers.get('content-range')) || parseInt(resp.headers.get('content-length') || '', 10) || fmt.contentLength || null;
-    if (!headOk && totalBytes && totalBytes > 1) {
-      const checkStarts = [...new Set([
-        Math.min(RANGE_CHUNK_SIZE, totalBytes - 1),
-        Math.min(4 * 1024 * 1024, totalBytes - 1),
-        Math.max(0, totalBytes - RANGE_CHUNK_SIZE)
-      ])];
-
-      for (const checkStart of checkStarts) {
-        const checkEnd = Math.min(checkStart + Math.min(RANGE_CHUNK_SIZE, totalBytes - checkStart) - 1, totalBytes - 1);
-        const nextResp = await fetch(fmt.url, { headers: { Range: `bytes=${checkStart}-${checkEnd}` } });
-        const nextType = nextResp.headers.get('content-type') || '';
-        if (nextResp.status !== 206 || !isExpectedMediaType(nextType, fmt)) {
-          return {
-            ok: false,
-            reason: `Range continuation failed at ${checkStart}: HTTP ${nextResp.status} ${nextType || 'unknown'}`,
-            contentType: nextType
-          };
-        }
-      }
-    }
-
-    return {
-      ok: true,
-      contentType,
-      requiresRange: !headOk,
-      totalBytes
-    };
-  } catch (e) {
-    return { ok: false, reason: e.message || String(e) };
   }
+
+  // 2) 本命: ブラウザ内で WebPO を生成（住宅IP・BotGuardの最適環境）
+  //    player pot として tv に送るため video_id にバインド
+  try {
+    const t = await generatePoTokenInBrowser(_videoId || _visitorData || '');
+    if (t) { _pot = t; return _pot; }
+  } catch (e) {
+    console.warn('[ytdl] in-browser pot generation failed:', e);
+  }
+
+  // 3) フォールバック: ページが使用中の pot を横取り（background.js が保存）
+  try {
+    const { gvsPot } = await chrome.storage.session.get('gvsPot');
+    _pot = gvsPot || null;
+  } catch (_) {
+    _pot = null;
+  }
+  return _pot;
 }
 
-async function downloadWithRange(fmt, filename, validation) {
-  const totalBytes = validation.totalBytes;
-  if (!totalBytes) {
-    alert('Range ダウンロードに必要なファイルサイズを取得できませんでした。');
-    return;
-  }
+// ─── in-browser PO Token 生成（bgutils-js を youtube.com ページの MAIN world で実行）──
+// sandbox だと BotGuard が「本物のブラウザでない」と判断して WebPO を出さない(PMD:Undefined)。
+// 本物の youtube.com ページ上(MAIN world)で実行すると、正しい環境・Cookie・Origin になり、
+// fetch も youtube origin 直なのでプロキシ不要・CORS問題も無い。
+// 唯一の懸念は MAIN world での new Function(eval) がページCSPに弾かれないか（弾かれたらエラーで判明）。
 
-  const chunks = [];
+async function generatePoTokenInBrowser(identifier) {
+  if (!_tabId) { _lastPotError = 'tabId 無し'; return null; }
+  try {
+    // 1) bgutils を MAIN world に注入（window.BG を立てる）
+    await chrome.scripting.executeScript({
+      target: { tabId: _tabId },
+      world: 'MAIN',
+      files: ['vendor/bgutils/bgutils.js']
+    });
 
-  for (let start = 0; start < totalBytes; start += RANGE_CHUNK_SIZE) {
-    const end = Math.min(start + RANGE_CHUNK_SIZE - 1, totalBytes - 1);
-    const resp = await fetch(fmt.url, {
-      headers: {
-        Range: `bytes=${start}-${end}`
+    // 2) MAIN world で WebPO を生成
+    const [res] = await chrome.scripting.executeScript({
+      target: { tabId: _tabId },
+      world: 'MAIN',
+      args: ['O43z0dpjhgX20SCx4KAo', identifier || ''],
+      func: async (requestKey, identifier) => {
+        try {
+          if (!window.BG) return { error: 'bgutils未ロード(window.BG無し)' };
+          const bgConfig = {
+            requestKey,
+            fetch: (u, o) => fetch(u, o),
+            globalObj: window,
+            identifier
+          };
+          const challenge = await window.BG.Challenge.create(bgConfig);
+          if (!challenge) return { error: 'challenge取得失敗' };
+          const js = challenge.interpreterJavascript
+            && challenge.interpreterJavascript.privateDoNotAccessOrElseSafeScriptWrappedValue;
+          if (!js) return { error: 'interpreter無し' };
+          // YouTube は Trusted Types を強制 → 文字列の eval/Function は弾かれる。
+          // default ポリシーを作れれば全 sink が透過する（VM内部の eval も含め最強）。
+          // 作れなければ named ポリシーで TrustedScript を作り eval に渡す。
+          let toScript = (s) => s;
+          let policyKind = 'none';
+          try {
+            if (window.trustedTypes && window.trustedTypes.createPolicy) {
+              let pol;
+              try {
+                pol = window.trustedTypes.createPolicy('default', { createScript: (s) => s, createScriptURL: (s) => s });
+                policyKind = 'default';
+              } catch (_) {
+                pol = window.trustedTypes.createPolicy('ocha-bg-' + Math.random().toString(36).slice(2), { createScript: (s) => s });
+                policyKind = 'named';
+              }
+              toScript = (s) => pol.createScript(s);
+            }
+          } catch (e) {
+            return { error: 'TTポリシー作成不可: ' + (e && e.message || e) };
+          }
+          try {
+            (0, eval)(toScript(js));
+          } catch (e) {
+            return { error: `eval失敗(policy=${policyKind}): ` + (e && e.message || e) };
+          }
+          const r = await window.BG.PoToken.generate({
+            program: challenge.program,
+            globalName: challenge.globalName,
+            bgConfig
+          });
+          return { poToken: r.poToken };
+        } catch (e) {
+          return { error: String(e && e.message || e) };
+        }
       }
     });
 
-    if (resp.status !== 206 && resp.status !== 200) {
-      throw new Error(`Range download failed: HTTP ${resp.status}`);
-    }
+    const out = res && res.result;
+    if (out && out.poToken) return out.poToken;
+    _lastPotError = ((out && out.error) || '不明') + ' [page]';
+    return null;
+  } catch (e) {
+    _lastPotError = 'executeScript失敗: ' + (e && e.message || e);
+    return null;
+  }
+}
 
-    const contentType = resp.headers.get('content-type') || validation.contentType;
-    if (!isExpectedMediaType(contentType, fmt)) {
-      throw new Error(`Range download returned ${contentType || 'unknown content type'}`);
-    }
+function rangedUrl(url, start, end) {
+  let u = url + (url.includes('?') ? '&' : '?') + `range=${start}-${end}`;
+  if (_pot && !/[?&]pot=/.test(u)) u += '&pot=' + encodeURIComponent(_pot);
+  return u;
+}
 
-    chunks.push(await resp.arrayBuffer());
+const POT_FREE_LIMIT = 20 * 1024 * 1024; // pot無しで取得できる先頭バイト数
+
+async function fetchFormatBytes(fmt, onProgress) {
+  const total = fmt.contentLength || null;
+
+  // pot不要ソース(tv等)は20MBの壁なし＝そのままDL。pot必須ソース(iOS等)は
+  // WebPO pot が効かないので、20MB超なら pot不要の画質(tv)を選ぶよう促す。
+  if (!fmt.potFree && total && total > POT_FREE_LIMIT) {
+    throw new Error('この画質はPO Token必須クライアント由来でフルDLできません。別の画質（tv由来）を選んでください');
   }
 
-  const blob = new Blob(chunks, { type: validation.contentType || fmt.mimeType || 'application/octet-stream' });
-  const blobUrl = URL.createObjectURL(blob);
+  if (!total) {
+    const r = await fetch(fmt.url);
+    if (!r.ok && r.status !== 206) throw new Error(`HTTP ${r.status}`);
+    return new Uint8Array(await r.arrayBuffer());
+  }
 
-  chrome.downloads.download({
-    url: blobUrl,
-    filename,
-    saveAs: false
-  }, () => {
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
-    if (chrome.runtime.lastError) {
-      console.warn('[ytdl] Blob download failed:', chrome.runtime.lastError.message, fmt);
+  const chunkSize = Math.min(RANGE_CHUNK_SIZE, Math.max(1, Math.ceil(total / 2)));
+  const out = new Uint8Array(total);
+  let offset = 0;
+  let first = true;
+
+  for (let start = 0; start < total; start += chunkSize) {
+    if (!first) await delay(150); // バースト抑制（連続リクエストでの制限回避）
+    first = false;
+    const end = Math.min(start + chunkSize, total) - 1;
+    const part = await fetchRange(fmt.url, start, end, fmt);
+    out.set(part, offset);
+    offset += part.length;
+    if (onProgress) onProgress(Math.floor((offset / total) * 100));
+  }
+
+  if (offset !== total) throw new Error(`サイズ不一致: ${offset}/${total}`);
+  return out;
+}
+
+async function fetchRange(url, start, end, fmt) {
+  const backoffs = [0, 1000, 3000, 7000, 15000]; // 各試行前の待機(ms)
+  let lastStatus = 0;
+  let triedPot = false;
+
+  for (let attempt = 0; attempt < backoffs.length; attempt++) {
+    if (backoffs[attempt]) await delay(backoffs[attempt]);
+    let r;
+    try {
+      r = await fetch(rangedUrl(url, start, end)); // _pot があれば &pot= が付く
+    } catch (e) {
+      lastStatus = -1;
+      continue;
     }
+
+    if (r.status === 200 || r.status === 206) {
+      const ct = r.headers.get('content-type') || '';
+      if (!isExpectedMediaType(ct, fmt)) throw new Error(`想定外のContent-Type: ${ct || 'unknown'}`);
+      return new Uint8Array(await r.arrayBuffer());
+    }
+
+    lastStatus = r.status;
+
+    // 20MB超で403かつ未だpot未取得なら「必要になった時だけ」遅延生成して即再試行
+    if (r.status === 403 && start >= POT_FREE_LIMIT && !_pot && !triedPot) {
+      triedPot = true;
+      setMuxProgress('PO Tokenを生成中...');
+      await ensurePot();
+      clearMuxProgress();
+      if (_pot) { attempt--; continue; } // potを付けてこのチャンクを再試行（試行数は消費しない）
+    }
+
+    if (r.status !== 403 && r.status !== 429 && r.status < 500) break; // 恒久的エラーは即中断
+  }
+
+  let hint = '';
+  if (lastStatus === 403 && start >= POT_FREE_LIMIT) {
+    hint = _pot
+      ? '（PO Tokenが無効/期限切れの可能性。YouTube動画を再生し直してから再試行してください）'
+      : '（PO Tokenが必要です。YouTube動画を数秒再生してから再試行してください）';
+  } else if (lastStatus === 403 || lastStatus === 429) {
+    hint = '（レート制限の可能性。数分待つか解像度を下げて再試行してください）';
+  }
+  throw new Error(`レンジ取得失敗 ${start}-${end}: HTTP ${lastStatus}${hint}`);
+}
+
+function delay(ms) {
+  return new Promise(res => setTimeout(res, ms));
+}
+
+// ─── mux (ffmpeg.wasm via sandbox) ──────────────────────────────────────────
+
+let _wasmBinary = null;
+
+async function getWasmBinary() {
+  if (_wasmBinary) return _wasmBinary;
+  const r = await fetch(chrome.runtime.getURL('vendor/ffmpeg/ffmpeg-core.wasm'));
+  if (!r.ok) throw new Error('ffmpeg-core.wasm の読み込みに失敗');
+  _wasmBinary = await r.arrayBuffer();
+  return _wasmBinary;
+}
+
+function muxerHandshake() {
+  const iframe = document.getElementById('muxer-iframe');
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      clearInterval(interval);
+      window.removeEventListener('message', onMsg);
+      reject(new Error('合成サンドボックスの起動に失敗しました'));
+    }, 5000);
+    const interval = setInterval(() => {
+      iframe?.contentWindow?.postMessage({ action: 'ping' }, '*');
+    }, 50);
+    function onMsg(e) {
+      if (e.data && e.data.action === 'pong') {
+        clearInterval(interval);
+        clearTimeout(timeout);
+        window.removeEventListener('message', onMsg);
+        resolve({ coreReady: !!e.data.coreReady, iframe });
+      }
+    }
+    window.addEventListener('message', onMsg);
   });
 }
 
-function parseTotalBytes(contentRange) {
-  const m = String(contentRange || '').match(/\/(\d+)$/);
-  return m ? parseInt(m[1], 10) : null;
+async function muxStreams(videoBytes, audioBytes, names) {
+  const { coreReady, iframe } = await muxerHandshake();
+  const wasmBinary = coreReady ? null : await getWasmBinary();
+  const reqId = 'mux_' + Date.now();
+
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      window.removeEventListener('message', onMsg);
+      reject(new Error('合成タイムアウト（5分）'));
+    }, 300000);
+
+    function onMsg(e) {
+      const d = e.data;
+      if (!d || d.reqId !== reqId) return;
+      if (d.action === 'muxProgress') {
+        const m = /time=(\S+)/.exec(d.line || '');
+        if (m) setMuxProgress(`合成中... ${m[1]}`);
+        return;
+      }
+      if (d.action === 'muxResult') {
+        clearTimeout(timeout);
+        window.removeEventListener('message', onMsg);
+        if (d.success) resolve(new Uint8Array(d.data));
+        else reject(new Error(d.error));
+      }
+    }
+    window.addEventListener('message', onMsg);
+
+    const msg = {
+      action: 'mux',
+      reqId,
+      video: videoBytes.buffer,
+      audio: audioBytes.buffer,
+      videoName: names.video,
+      audioName: names.audio,
+      outName: names.out
+    };
+    if (wasmBinary) msg.wasmBinary = wasmBinary; // 転送せずコピー（キャッシュ維持）
+    iframe.contentWindow.postMessage(msg, '*', [videoBytes.buffer, audioBytes.buffer]);
+  });
+}
+
+function chooseMuxContainer(video, audio) {
+  const v = video.ext, a = audio.ext;
+  if (v === 'mp4' && (a === 'm4a' || a === 'mp4')) {
+    return { ext: 'mp4', video: 'video.mp4', audio: 'audio.m4a', out: 'out.mp4', mime: 'video/mp4' };
+  }
+  if (v === 'webm' && (a === 'webm' || a === 'opus')) {
+    return { ext: 'webm', video: 'video.webm', audio: 'audio.webm', out: 'out.webm', mime: 'video/webm' };
+  }
+  // 混在（mp4映像+webm音声 等）は mkv が無劣化copyで安全
+  return { ext: 'mkv', video: `video.${v}`, audio: `audio.${a}`, out: 'out.mkv', mime: 'video/x-matroska' };
+}
+
+async function muxAndDownload(video, audio, videoTitle, els) {
+  if (!video || !audio) { alert('映像と音声の両方を選択してください'); return; }
+  if (video.isMuxed) { alert('選択中の映像は既に音声込みです。合成は不要です。'); return; }
+
+  // ffmpeg.wasm は wasm32。映像+音声+出力が同時にwasmヒープに乗るため、
+  // 合計が大きいと「Array buffer allocation failed」になりやすい。事前に警告。
+  const estTotal = (video.contentLength || 0) + (audio.contentLength || 0);
+  const MUX_SOFT_LIMIT = 1100 * 1024 * 1024; // ~1.1GB
+  if (estTotal > MUX_SOFT_LIMIT) {
+    const mb = Math.round(estTotal / 1024 / 1024);
+    const ok = confirm(
+      `この組み合わせは合計約${mb}MBで、ブラウザのメモリ上限により合成が失敗する可能性が高いです。\n` +
+      `より低い解像度を選ぶか、映像/音声を個別にDLすることを推奨します。\n\nそれでも合成を試しますか？`
+    );
+    if (!ok) return;
+  }
+
+  const buttons = [els.downloadVideo, els.downloadAudio, els.downloadPair, els.downloadMux];
+  buttons.forEach(b => { if (b) b.disabled = true; });
+
+  try {
+    setMuxProgress('映像をダウンロード中...');
+    let vb = await fetchFormatBytes(video, p => setMuxProgress(`映像DL中... ${p}%`));
+    setMuxProgress('音声をダウンロード中...');
+    let ab = await fetchFormatBytes(audio, p => setMuxProgress(`音声DL中... ${p}%`));
+
+    const cont = chooseMuxContainer(video, audio);
+    setMuxProgress('合成中...（ウィンドウを閉じないでください）');
+    const out = await muxStreams(vb, ab, cont);
+    vb = ab = null; // 転送済みだが参照を明示的に解放
+
+    setMuxProgress('保存中...');
+    const blob = new Blob([out], { type: cont.mime });
+    const blobUrl = URL.createObjectURL(blob);
+    const filename = `${sanitize(videoTitle)}_${sanitize(video.quality)}_muxed.${cont.ext}`;
+    chrome.downloads.download({ url: blobUrl, filename, saveAs: false }, () => {
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 120000);
+      if (chrome.runtime.lastError) {
+        console.warn('[ytdl] Muxed download failed:', chrome.runtime.lastError.message);
+      }
+    });
+    setMuxProgress('✓ 合成完了');
+    setTimeout(clearMuxProgress, 4000);
+  } catch (e) {
+    clearMuxProgress();
+    console.warn('[ytdl] Mux failed:', e);
+    const msg = String(e && e.message || e);
+    if (/allocation failed|out of memory|memory/i.test(msg)) {
+      alert('メモリ不足で合成できませんでした。より低い解像度を選ぶか、映像/音声を個別にDLしてください。');
+    } else {
+      alert(`合成に失敗しました: ${msg}`);
+    }
+  } finally {
+    buttons.forEach(b => { if (b) b.disabled = false; });
+  }
+}
+
+function setMuxProgress(text) {
+  const el = document.getElementById('mux-progress');
+  if (el) { el.textContent = text; el.style.display = 'block'; }
+}
+
+function clearMuxProgress() {
+  const el = document.getElementById('mux-progress');
+  if (el) { el.style.display = 'none'; el.textContent = ''; }
 }
 
 function isExpectedMediaType(contentType, fmt) {
@@ -1101,7 +1518,7 @@ function renderFormatDebug(el, debug, formats, resolveStats = null) {
   if (lines.length === 0) return;
 
   el.textContent = lines.join('\n');
-  el.style.display = highestVideoHeight(formats) <= 360 || errors.length || resolveStats?.unresolvedSig ? 'block' : 'none';
+  el.style.display = 'block'; // 常に表示（クライアント別の状態を確認できるように）
 }
 
 function groupFormatsBySource(formats) {
@@ -1163,6 +1580,9 @@ function buildFilename(videoTitle, fmt, kind = null) {
   if (kind) parts.push(kind);
   parts.push(sanitize(fmt.quality));
   if (fmt.fps && fmt.hasVideo) parts.push(`${fmt.fps}fps`);
+  if (!fmt.hasVideo && fmt.hasAudio && fmt.language) {
+    parts.push(fmt.language + (fmt.isOriginalAudio ? '-orig' : fmt.isDubbed ? '-dub' : ''));
+  }
   return `${parts.filter(Boolean).join('_')}.${fmt.ext}`;
 }
 
@@ -1174,7 +1594,8 @@ function compareFormats(a, b) {
 }
 
 function compareAudioFormats(a, b) {
-  return (b.bitrate ?? 0) - (a.bitrate ?? 0)
+  return audioTrackRank(b) - audioTrackRank(a)        // オリジナル音声を先頭に
+    || (b.bitrate ?? 0) - (a.bitrate ?? 0)
     || String(a.ext).localeCompare(String(b.ext))
     || String(a.source ?? '').localeCompare(String(b.source ?? ''));
 }

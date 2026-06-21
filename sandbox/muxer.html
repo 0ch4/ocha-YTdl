@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <!-- ffmpeg-core (single-thread UMD build). Runs in sandbox: eval/wasm allowed,
+       opaque origin avoids extension CSP. wasmBinary is passed in from the popup
+       so this page never needs to fetch the 32MB binary itself. -->
+  <script src="../vendor/ffmpeg/ffmpeg-core.js"></script>
+  <script>
+    // createFFmpegCore is defined as a global by the UMD build.
+    var corePromise = null; // cached Emscripten module (compile wasm once)
+
+    function initCore(wasmBinary, onLog) {
+      if (corePromise) return corePromise;
+      corePromise = createFFmpegCore({
+        wasmBinary: wasmBinary,
+        print:    function (t) { onLog && onLog(t); },
+        printErr: function (t) { onLog && onLog(t); },
+        locateFile: function (p) { return p; }
+      });
+      return corePromise;
+    }
+
+    function post(target, origin, msg, transfer) {
+      target.postMessage(msg, origin || '*', transfer || []);
+    }
+
+    window.addEventListener('message', async function (event) {
+      var data = event.data;
+      if (!data) return;
+      var src = event.source;
+      var origin = event.origin || '*';
+
+      if (data.action === 'ping') {
+        post(src, origin, { action: 'pong', coreReady: !!corePromise });
+        return;
+      }
+
+      if (data.action === 'mux') {
+        var reqId = data.reqId;
+        try {
+          if (!corePromise && !data.wasmBinary) {
+            throw new Error('wasmBinary not provided and core not initialised');
+          }
+
+          var logs = [];
+          var Module = await initCore(data.wasmBinary, function (line) {
+            logs.push(line);
+            // ffmpeg writes progress to stderr ("time=...") — forward raw lines
+            post(src, origin, { action: 'muxProgress', reqId: reqId, line: line });
+          });
+
+          var vName = data.videoName || 'video.mp4';
+          var aName = data.audioName || 'audio.m4a';
+          var oName = data.outName   || 'out.mp4';
+
+          // Write each input to MEMFS then drop the JS-side buffer immediately,
+          // so we don't hold the transferred ArrayBuffer and the MEMFS copy at once.
+          Module.FS.writeFile(vName, new Uint8Array(data.video));
+          data.video = null;
+          Module.FS.writeFile(aName, new Uint8Array(data.audio));
+          data.audio = null;
+
+          // -c copy : stream copy, no re-encode (fast, lossless)
+          var rc = Module.exec(
+            '-i', vName, '-i', aName,
+            '-c', 'copy',
+            '-movflags', '+faststart',
+            oName
+          );
+
+          if (rc !== 0) throw new Error('ffmpeg exited with code ' + rc + '\n' + logs.slice(-12).join('\n'));
+
+          var out = Module.FS.readFile(oName);
+
+          // tidy up MEMFS so repeated muxes don't accumulate
+          try { Module.FS.unlink(vName); } catch (_) {}
+          try { Module.FS.unlink(aName); } catch (_) {}
+          try { Module.FS.unlink(oName); } catch (_) {}
+
+          var buf = out.buffer;
+          post(src, origin, { action: 'muxResult', reqId: reqId, success: true, data: buf }, [buf]);
+        } catch (err) {
+          post(src, origin, { action: 'muxResult', reqId: reqId, success: false, error: String(err && err.message || err) });
+        }
+      }
+    });
+  </script>
+</head>
+<body></body>
+</html>

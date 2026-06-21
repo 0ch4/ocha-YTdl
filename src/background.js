@@ -1,3 +1,63 @@
+// ─── PO Token capture ────────────────────────────────────────────────────────
+// YouTube の動画再生は googlevideo へのリクエストに &pot=<PO Token> を付ける。
+// PO Token 無しだと adaptive ストリームは先頭~20MB しか落とせない(403)。
+// ページが生成・使用している pot を横取りして storage.session に保存し、
+// popup のダウンロード時に同じセッションのURLへ流用する。
+// WebPO pot は visitorData/datasync にバインドされフォーマット非依存。
+
+let _lastPot = null;
+let _seen = 0, _potHits = 0;
+
+function savePot(pot, where, tabId) {
+  if (!pot || pot === _lastPot) return;
+  _lastPot = pot;
+  _potHits++;
+  chrome.storage.session.set({ gvsPot: pot, gvsPotTs: Date.now(), gvsPotTabId: tabId });
+  console.log(`[ytdl-bg] PO Token captured from ${where} (len=${pot.length}):`, pot.slice(0, 24) + '…');
+}
+
+// SABR の videoplayback は POST で、pot が URL ではなく protobuf ボディ側に
+// 入ることがある。pot は base64url 文字列なので、ボディから最長の base64url 連続を
+// 取り出して候補とする（URL に pot があればそちらを優先）。
+function extractPotFromBody(requestBody) {
+  try {
+    const raw = requestBody?.raw;
+    if (!raw || !raw.length) return null;
+    let bin = '';
+    for (const part of raw) {
+      if (!part.bytes) continue;
+      const bytes = new Uint8Array(part.bytes);
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    }
+    const matches = bin.match(/[A-Za-z0-9_-]{80,}={0,2}/g);
+    if (!matches) return null;
+    // 最長の base64url 連続を pot 候補とする
+    return matches.reduce((a, b) => (b.length > a.length ? b : a));
+  } catch (_) {
+    return null;
+  }
+}
+
+chrome.webRequest.onBeforeRequest.addListener(
+  (details) => {
+    _seen++;
+    try {
+      const urlPot = new URL(details.url).searchParams.get('pot');
+      if (urlPot) {
+        savePot(urlPot, 'URL', details.tabId);
+        return;
+      }
+      if (details.method === 'POST' && details.requestBody) {
+        const bodyPot = extractPotFromBody(details.requestBody);
+        if (bodyPot) savePot(bodyPot, 'POST body', details.tabId);
+      }
+    } catch (_) {}
+    if (_seen % 20 === 0) console.log(`[ytdl-bg] googlevideo requests seen=${_seen}, pot captured=${_potHits}`);
+  },
+  { urls: ['*://*.googlevideo.com/*'] },
+  ['requestBody']
+);
+
 chrome.runtime.onInstalled.addListener(() => {
   refreshActiveTab();
 });

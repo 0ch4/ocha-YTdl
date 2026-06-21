@@ -41,6 +41,18 @@
     .nsig-ok   { background: #0a2a0a; color: #4caf50; }
     .nsig-fail { background: #2a0a0a; color: #ff6b6b; }
 
+    #pot-status {
+      display: none;
+      font-size: 10px;
+      padding: 3px 7px;
+      border-radius: 3px;
+      margin-bottom: 8px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .pot-ok   { background: #0a2a0a; color: #4caf50; }
+    .pot-warn { background: #2a230a; color: #e0b000; }
+
     #status { font-size: 12px; color: #888; padding: 6px 0; }
     #error  { font-size: 12px; color: #ff6b6b; padding: 6px 0; display: none; }
 
@@ -102,6 +114,16 @@
       white-space: pre-wrap;
       word-break: break-word;
     }
+    #mux-progress {
+      display: none;
+      color: #4caf50;
+      font-size: 11px;
+      line-height: 1.4;
+      margin: 2px 0 8px;
+    }
+    #download-mux-selected { width: 100%; padding: 8px; background: #1565c0; }
+    #download-mux-selected:hover { background: #1976d2; }
+    #download-mux-selected:disabled { background: #333; color: #777; }
 
     .section       { display: none; margin-bottom: 10px; }
     .section-label {
@@ -147,11 +169,12 @@
 <body>
   <header>
     <h1>ocha-YTdl</h1>
-    <span id="version">v0.3.11</span>
+    <span id="version">v0.7.1</span>
   </header>
 
   <div id="video-title"></div>
   <div id="nsig-status"></div>
+  <div id="pot-status"></div>
   <div id="status">読み込み中...</div>
   <div id="error"></div>
 
@@ -174,7 +197,11 @@
       <button class="picker-btn" id="download-audio-selected">音声DL</button>
       <button class="picker-btn" id="download-pair-selected">両方DL</button>
     </div>
+    <div class="picker-row">
+      <button class="picker-btn" id="download-mux-selected">🎬 映像+音声を合成して保存</button>
+    </div>
   </div>
+  <div id="mux-progress"></div>
   <div id="quality-note"></div>
   <div id="format-debug"></div>
 
@@ -196,6 +223,8 @@
   </div>
 
   <iframe id="solver-iframe" src="/sandbox/solver.html" style="display:none"></iframe>
+  <iframe id="muxer-iframe" src="/sandbox/muxer.html" style="display:none"></iframe>
+  <iframe id="potgen-iframe" src="/sandbox/potgen.html" style="display:none"></iframe>
   <script src="popup.js"></script>
 </body>
 </html>
