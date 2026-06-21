@@ -4,8 +4,8 @@ YouTube の現在開いている動画ページから、利用可能な動画/�
 
 English README: [README_EN.md](README_EN.md)
 
-![ocha-YTdl popup sample](docs/images/popup-sample.svg)
-サンプル画像は `tools/generate-popup-sample.mjs` で生成します。
+![ocha-YTdl popup screenshot](docs/images/sc.png)
+サンプル画像は `docs/images/sc.png` を参照します。
 
 ## 機能
 
@@ -72,7 +72,7 @@ docs/
   compat/
     latest.json
   images/
-    popup-sample.svg
+    sc.png
 ```
 
 この拡張機能はビルド工程なしで動作する構成です。`manifest.json` と HTML 内のパスは、このフォルダ構成を前提にした相対パスです。
