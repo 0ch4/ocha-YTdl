@@ -45,16 +45,24 @@ powershell -ExecutionPolicy Bypass -File tools\update-local.ps1
 
 ## yt-dlp が更新されたときにメンテナがやること
 
-通常は GitHub Actions が毎日 yt-dlp の最新リリースを確認し、`docs/compat/latest.json` の更新 PR を作成します。
+通常は GitHub Actions が毎日 yt-dlp の最新リリースを確認し、`tools/update-ytdlp-vendor.mjs` で更新 PR を作成します。
+
+このスクリプトは、yt-dlp の `pyproject.toml` が要求する `yt-dlp-ejs` バージョンを読み取り、PyPI wheel から EJS core を取得します。その後、Chrome 拡張向けの Trusted Types 対応パッチを当てて、`vendor/yt.solver.core.js`、`src/generated/ytdlp-meta.json`、`docs/compat/latest.json` を更新します。
 
 メンテナ側の作業は次の流れです。
 
 1. GitHub Actions が作った PR を確認する
-2. メタデータだけの更新であれば、内容を確認してマージする
-3. ポップアップで更新推奨が出る、または YouTube 抽出が壊れた場合は yt-dlp の変更点を確認する
-4. `vendor/yt.solver.core.js`、YouTube クライアント定義、PO Token 周りなど、影響箇所を必要に応じて更新する
-5. 通常動画、Shorts、360p、720p/1080p、音声のみ、映像+音声の合成をテストする
-6. `manifest.json`、`src/popup.html`、`src/generated/ytdlp-meta.json` のバージョン情報を更新する
-7. `docs/compat/latest.json` を同期済み状態に戻して push する
+2. `vendor/yt.solver.core.js` だけの機械的なEJS更新、またはメタデータ更新だけであれば、内容を確認してテストする
+3. 通常動画、Shorts、360p、720p/1080p、音声のみ、映像+音声の合成をテストする
+4. 問題なければ PR をマージする
+5. ポップアップで更新推奨が出る、または YouTube 抽出が壊れた場合だけ yt-dlp の変更点を深掘りする
+6. 自動更新で吸収できない場合は、YouTube クライアント定義、PO Token 周り、Range取得周りなど、影響箇所を手動で更新する
+7. 拡張機能の仕様変更がある場合は `manifest.json`、`src/popup.html`、`src/generated/ytdlp-meta.json` のバージョン情報を更新する
+
+手元で同じ更新を試す場合:
+
+```bash
+node tools/update-ytdlp-vendor.mjs --sync-compat
+```
 
 現状の構成では、拡張機能が実行時に yt-dlp のコードを自動取得することはしません。Manifest V3 と Chrome Web Store のリモートコード制限を避けるため、リモートから取得するのは互換性確認用の JSON のみです。

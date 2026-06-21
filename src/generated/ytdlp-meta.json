@@ -4,9 +4,10 @@
   "ytDlpRelease": "2026.06.09",
   "ytDlpCommit": "7f7bdc9",
   "ejsVersion": "0.8.0",
-  "youtubeClientsRevision": "2026-06-09",
+  "youtubeClientsRevision": "2026.06.09",
   "notes": [
     "Bundled metadata used for update recommendation checks only.",
-    "Runtime code is loaded only from extension-packaged files."
+    "Runtime code is loaded only from extension-packaged files.",
+    "yt-dlp-ejs wheel sha256: 79300e5fca7f937a1eeede11f0456862c1b41107ce1d726871e0207424f4bdb4"
   ]
 }

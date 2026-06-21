@@ -61,6 +61,7 @@ tools/
   check-ytdlp-upstream.mjs
   probe-formats.mjs
   update-local.ps1
+  update-ytdlp-vendor.mjs
 docs/
   UPDATE_JA.md
   compat/
@@ -77,7 +78,13 @@ YouTube extraction changes frequently in yt-dlp. This extension does not execute
 
 Instead, it compares bundled metadata in `src/generated/ytdlp-meta.json` with hosted JSON metadata at `docs/compat/latest.json` and displays an update recommendation when the bundled logic may be stale. This is data-only JSON fetching, not remote code execution.
 
-The repository includes a GitHub Actions workflow that runs `tools/check-ytdlp-upstream.mjs` on a schedule. When the latest yt-dlp release is newer than the bundled metadata, it updates `docs/compat/latest.json` and opens a pull request.
+The repository includes a GitHub Actions workflow that runs `tools/update-ytdlp-vendor.mjs` on a schedule. It reads the `yt-dlp-ejs` version required by the latest yt-dlp release, imports the EJS core from the PyPI wheel, applies the Chrome-extension patch, and opens a pull request for `vendor/yt.solver.core.js`, `src/generated/ytdlp-meta.json`, and `docs/compat/latest.json`.
+
+To run the same update locally:
+
+```bash
+node tools/update-ytdlp-vendor.mjs --sync-compat
+```
 
 ## Notes
 
@@ -107,4 +114,4 @@ node tools/probe-formats.mjs https://www.youtube.com/shorts/c504uRvrT-s
 - `vendor/astring.min.js`: Astring JavaScript code generator.
 - `vendor/bgutils/`: PO Token / BotGuard helpers.
 - `vendor/ffmpeg/`: ffmpeg.wasm used for muxing video and audio.
-- `vendor/yt.solver.core.js`: generated from yt-dlp ejs logic, with the original SPDX header preserved.
+- `vendor/yt.solver.core.js`: EJS core imported from the `yt-dlp-ejs` wheel and patched for Chrome extension Trusted Types handling.

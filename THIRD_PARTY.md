@@ -44,5 +44,7 @@ This file keeps its original SPDX header:
 SPDX-License-Identifier: Unlicense
 ```
 
-It was generated from yt-dlp ejs logic:
-https://github.com/yt-dlp/yt-dlp
+It is imported from the `yt-dlp-ejs` wheel selected by the bundled yt-dlp release metadata, then patched for Chrome extension Trusted Types handling:
+https://github.com/yt-dlp/ejs
+
+The update path is automated by `tools/update-ytdlp-vendor.mjs`.

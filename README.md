@@ -63,6 +63,7 @@ tools/
   check-ytdlp-upstream.mjs
   probe-formats.mjs
   update-local.ps1
+  update-ytdlp-vendor.mjs
 docs/
   UPDATE_JA.md
   compat/
@@ -79,7 +80,13 @@ YouTube 抽出周りは yt-dlp 側でも頻繁に変更されます。この拡�
 
 代わりに、`src/generated/ytdlp-meta.json` と GitHub 上の `docs/compat/latest.json` を比較し、同梱ロジックが古い可能性がある場合だけポップアップに更新推奨を表示します。この取得は JSON データの確認のみで、リモートコード実行は行いません。
 
-リポジトリでは GitHub Actions が `tools/check-ytdlp-upstream.mjs` を定期実行し、yt-dlp の最新リリースが同梱メタより新しい場合に `docs/compat/latest.json` を更新する PR を作成します。
+リポジトリでは GitHub Actions が `tools/update-ytdlp-vendor.mjs` を定期実行します。yt-dlp の最新リリースが要求する `yt-dlp-ejs` wheel から EJS core を取得し、Chrome 拡張向けパッチを当てたうえで `vendor/yt.solver.core.js`、`src/generated/ytdlp-meta.json`、`docs/compat/latest.json` を更新する PR を作成します。
+
+手元で同じ処理を実行する場合:
+
+```bash
+node tools/update-ytdlp-vendor.mjs --sync-compat
+```
 
 ## 注意点
 
@@ -111,6 +118,6 @@ node tools/probe-formats.mjs https://www.youtube.com/shorts/c504uRvrT-s
 - `vendor/astring.min.js`: Astring JavaScript code generator
 - `vendor/bgutils/`: PO Token / BotGuard 関連処理
 - `vendor/ffmpeg/`: 映像と音声の合成に使う ffmpeg.wasm
-- `vendor/yt.solver.core.js`: yt-dlp ejs logic 由来の生成ファイル
+- `vendor/yt.solver.core.js`: `yt-dlp-ejs` wheel 由来の EJS core に Chrome 拡張向けパッチを当てた生成ファイル
 
 詳細は [THIRD_PARTY.md](THIRD_PARTY.md) を参照してください。
