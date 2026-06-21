@@ -1,5 +1,7 @@
-const DEFAULT_INNERTUBE_API_KEY = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
-const RANGE_CHUNK_SIZE = 10 << 20; // 10MB — matches yt-dlp's CHUNK_SIZE
+const YOUTUBE_CONFIG = globalThis.OCHA_YTDL_YOUTUBE_CONFIG || {};
+const DEFAULT_INNERTUBE_API_KEY = YOUTUBE_CONFIG.defaultInnertubeApiKey || 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
+const DEFAULT_WEB_CLIENT_VERSION = YOUTUBE_CONFIG.defaultWebClientVersion || '2.20260114.08.00';
+const RANGE_CHUNK_SIZE = YOUTUBE_CONFIG.rangeChunkSize || (10 << 20); // 10MB — matches yt-dlp's CHUNK_SIZE
 const MAINTENANCE_STATUS_URL = 'https://raw.githubusercontent.com/0ch4/ocha-YTdl/main/docs/compat/latest.json';
 const MAINTENANCE_STATUS_CACHE_MS = 24 * 60 * 60 * 1000;
 const UPDATE_GUIDE_URL = 'https://github.com/0ch4/ocha-YTdl/blob/main/docs/UPDATE_JA.md';
@@ -626,19 +628,14 @@ function findJsonObjectEnd(text, start) {
 
 function getClientNameHeader(clientName) {
   if (Number.isFinite(Number(clientName))) return String(clientName);
-  if (clientName === 'WEB') return '1';
-  if (clientName === 'WEB_EMBEDDED_PLAYER') return '56';
-  if (clientName === 'WEB_REMIX') return '67';
-  if (clientName === 'ANDROID') return '3';
-  if (clientName === 'ANDROID_VR') return '28';
-  if (clientName === 'IOS') return '5';
-  if (clientName === 'TVHTML5') return '7';
+  const headers = YOUTUBE_CONFIG.clientNameHeaders || {};
+  if (headers[clientName]) return headers[clientName];
   return '1';
 }
 
 // yt-dlp が pot 無しで使う既定クライアント = GVS_PO_TOKEN_POLICY 未定義のもの。
 // これらのソース由来の直URLは PO Token 不要で20MBの壁を越えられる。
-const POT_FREE_SOURCES = new Set(['android_vr', 'tv', 'tv_downgraded']);
+const POT_FREE_SOURCES = new Set(YOUTUBE_CONFIG.potFreeSources || ['android_vr', 'tv', 'tv_downgraded']);
 function isPotFreeSource(source) {
   return POT_FREE_SOURCES.has(source);
 }
@@ -681,105 +678,49 @@ function buildInnertubeClients(innertube = {}) {
   const pageContext = innertube.context || {
     client: {
       clientName: 'WEB',
-      clientVersion: innertube.clientVersion || '2.20260114.08.00',
+      clientVersion: innertube.clientVersion || DEFAULT_WEB_CLIENT_VERSION,
       hl: 'ja',
       gl: 'JP',
       visitorData: innertube.visitorData || undefined
     }
   };
 
-  return [
-    // tv系(TVHTML5)= 直URLを返す WebPO クライアント。GVSはpot不要ポリシー＝20MBの壁なし。
-    // yt-dlp は tv に player pot を送らず Cookie のみで使う（認証時の既定は tv_downgraded）。
-    // → potは送らずログインCookieで叩く。これが本命の高解像度経路。
-    {
-      key: 'tv',
-      context: {
-        client: {
-          clientName: 'TVHTML5',
-          clientVersion: '7.20260114.12.00',
-          hl: 'ja',
-          gl: 'JP',
-          visitorData: innertube.visitorData || undefined
-        }
-      },
-      clientName: 'TVHTML5',
-      clientVersion: '7.20260114.12.00'
-    },
-    {
-      key: 'tv_downgraded',
-      context: {
-        client: {
-          clientName: 'TVHTML5',
-          clientVersion: '5.20260114',
-          userAgent: 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version',
-          hl: 'ja',
-          gl: 'JP',
-          visitorData: innertube.visitorData || undefined
-        }
-      },
-      clientName: 'TVHTML5',
-      clientVersion: '5.20260114'
-    },
-    {
-      key: 'page_web',
-      context: pageContext,
-      clientName: innertube.clientName || pageClient?.clientName || 'WEB',
-      clientVersion: innertube.clientVersion || pageClient?.clientVersion || '2.20260114.08.00',
-      usePlayerPot: true
-    },
-    {
-      key: 'android',
-      context: {
-        client: {
-          clientName: 'ANDROID',
-          clientVersion: '21.02.35',
-          androidSdkVersion: 30,
-          userAgent: 'com.google.android.youtube/21.02.35 (Linux; U; Android 11) gzip',
-          osName: 'Android',
-          osVersion: '11',
-          hl: 'ja',
-          gl: 'JP'
-        }
-      },
-      clientName: 'ANDROID',
-      clientVersion: '21.02.35'
-    },
-    {
-      key: 'ios',
-      context: {
-        client: {
-          clientName: 'IOS',
-          clientVersion: '21.02.3',
-          deviceMake: 'Apple',
-          deviceModel: 'iPhone16,2',
-          userAgent: 'com.google.ios.youtube/21.02.3 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)',
-          osName: 'iPhone',
-          osVersion: '18.3.2.22D82',
-          hl: 'ja',
-          gl: 'JP'
-        }
-      },
-      clientName: 'IOS',
-      clientVersion: '21.02.3'
-    },
-    {
-      key: 'web_safari',
-      context: {
-        client: {
-          clientName: 'WEB',
-          clientVersion: innertube.clientVersion || pageClient?.clientVersion || '2.20260114.08.00',
-          userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.5 Safari/605.1.15,gzip(gfe)',
-          hl: 'ja',
-          gl: 'JP',
-          visitorData: innertube.visitorData || pageClient?.visitorData || undefined
-        }
-      },
-      clientName: 'WEB',
-      clientVersion: innertube.clientVersion || pageClient?.clientVersion || '2.20260114.08.00',
-      usePlayerPot: true
+  const profiles = YOUTUBE_CONFIG.innertubeClientProfiles || [];
+  if (profiles.length === 0) {
+    throw new Error('YouTube client config not loaded');
+  }
+
+  return profiles.map(profile => {
+    if (profile.usePageContext) {
+      return {
+        key: profile.key,
+        context: pageContext,
+        clientName: innertube.clientName || pageClient?.clientName || profile.defaultClientName || 'WEB',
+        clientVersion: innertube.clientVersion || pageClient?.clientVersion || profile.defaultClientVersion || DEFAULT_WEB_CLIENT_VERSION,
+        usePlayerPot: Boolean(profile.usePlayerPot)
+      };
     }
-  ];
+
+    const client = { ...(profile.contextClient || {}) };
+    const clientVersion = profile.clientVersionFromPage
+      ? innertube.clientVersion || pageClient?.clientVersion || profile.defaultClientVersion || DEFAULT_WEB_CLIENT_VERSION
+      : profile.clientVersion || client.clientVersion || DEFAULT_WEB_CLIENT_VERSION;
+
+    client.clientVersion = clientVersion;
+    if (profile.includeVisitorData) {
+      client.visitorData = innertube.visitorData || undefined;
+    } else if (profile.includeVisitorDataFromPage) {
+      client.visitorData = innertube.visitorData || pageClient?.visitorData || undefined;
+    }
+
+    return {
+      key: profile.key,
+      context: { client },
+      clientName: profile.clientName || client.clientName || 'WEB',
+      clientVersion,
+      usePlayerPot: Boolean(profile.usePlayerPot)
+    };
+  });
 }
 
 async function fetchInnertubePlayerResponse(videoId, innertube = {}, clientConfig, tabId = null, pot = null) {
@@ -1230,7 +1171,7 @@ async function downloadFormat(fmt, videoTitle, kind) {
 //   サーバは content_binding(visitorData) を受け取り {po_token} を返す
 //   （bgutil-ytdlp-pot-provider 互換のJSON）。
 // 【現状】ページが生成した pot を background.js が横取りして storage.session に保存。
-const POT_PROVIDER_URL = null; // 例: 'https://your-server.example/get_pot'
+const POT_PROVIDER_URL = YOUTUBE_CONFIG.potProviderUrl || null; // 例: 'https://your-server.example/get_pot'
 
 let _pot = null;
 let _visitorData = null;

@@ -56,7 +56,7 @@ powershell -ExecutionPolicy Bypass -File tools\update-local.ps1
 3. 通常動画、Shorts、360p、720p/1080p、音声のみ、映像+音声の合成をテストする
 4. 問題なければ PR をマージする
 5. ポップアップで更新推奨が出る、または YouTube 抽出が壊れた場合だけ yt-dlp の変更点を深掘りする
-6. 自動更新で吸収できない場合は、YouTube クライアント定義、PO Token 周り、Range取得周りなど、影響箇所を手動で更新する
+6. 自動更新で吸収できない場合は、`src/config/youtube.js` の YouTube クライアント定義/API key/PO Token 設定、または Range取得周りなど、影響箇所を手動で更新する
 7. 拡張機能の仕様変更がある場合は `manifest.json`、`src/popup.html`、`src/generated/ytdlp-meta.json` のバージョン情報を更新する
 
 手元で同じ更新を試す場合:

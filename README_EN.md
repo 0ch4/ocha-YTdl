@@ -43,6 +43,8 @@ After updating files, reload `ocha-YTdl` from `chrome://extensions`.
 manifest.json
 src/
   background.js
+  config/
+    youtube.js
   generated/
     ytdlp-meta.json
   popup.html
@@ -77,6 +79,8 @@ The extension is intentionally build-free. All paths in `manifest.json` and HTML
 YouTube extraction changes frequently in yt-dlp. This extension does not execute remote JavaScript or WebAssembly at runtime; it only runs code bundled in the extension package.
 
 Instead, it compares bundled metadata in `src/generated/ytdlp-meta.json` with hosted JSON metadata at `docs/compat/latest.json` and displays an update recommendation when the bundled logic may be stale. This is data-only JSON fetching, not remote code execution.
+
+Values that tend to change with YouTube, such as the API key fallback, Innertube client definitions, client header IDs, and PO Token hooks, are centralized in `src/config/youtube.js`.
 
 The repository includes a GitHub Actions workflow that runs `tools/update-ytdlp-vendor.mjs` on a schedule. It reads the `yt-dlp-ejs` version required by the latest yt-dlp release, imports the EJS core from the PyPI wheel, applies the Chrome-extension patch, and opens a pull request for `vendor/yt.solver.core.js`, `src/generated/ytdlp-meta.json`, and `docs/compat/latest.json`.
 

@@ -45,6 +45,8 @@ powershell -ExecutionPolicy Bypass -File tools\update-local.ps1
 manifest.json
 src/
   background.js
+  config/
+    youtube.js
   generated/
     ytdlp-meta.json
   popup.html
@@ -79,6 +81,8 @@ docs/
 YouTube 抽出周りは yt-dlp 側でも頻繁に変更されます。この拡張機能は実行時に外部 JavaScript/WASM を読み込まず、同梱済みコードだけで動作します。
 
 代わりに、`src/generated/ytdlp-meta.json` と GitHub 上の `docs/compat/latest.json` を比較し、同梱ロジックが古い可能性がある場合だけポップアップに更新推奨を表示します。この取得は JSON データの確認のみで、リモートコード実行は行いません。
+
+API key、Innertube クライアント定義、client header 番号、PO Token 関連の差し替え点など、YouTube 側の変更で触りやすい値は `src/config/youtube.js` に集約しています。
 
 リポジトリでは GitHub Actions が `tools/update-ytdlp-vendor.mjs` を定期実行します。yt-dlp の最新リリースが要求する `yt-dlp-ejs` wheel から EJS core を取得し、Chrome 拡張向けパッチを当てたうえで `vendor/yt.solver.core.js`、`src/generated/ytdlp-meta.json`、`docs/compat/latest.json` を更新する PR を作成します。
 
