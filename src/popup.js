@@ -11,6 +11,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const nSigEl   = document.getElementById('nsig-status');
   const maintenanceEl = document.getElementById('maintenance-status');
   const maintenanceActionsEl = document.getElementById('maintenance-actions');
+  const maintenancePillEl = document.getElementById('maintenance-pill');
   const updateGuideBtn = document.getElementById('open-update-guide');
   const reloadExtensionBtn = document.getElementById('reload-extension');
   const iframe   = document.getElementById('solver-iframe');
@@ -38,7 +39,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     chrome.runtime.reload();
   });
 
-  checkMaintenanceStatus(maintenanceEl, maintenanceActionsEl).catch(e => {
+  checkMaintenanceStatus(maintenanceEl, maintenanceActionsEl, maintenancePillEl).catch(e => {
+    setMaintenancePill(maintenancePillEl, 'unknown', 'status: 確認不可', '互換性ステータスを確認できませんでした');
     console.info('[ytdl] Maintenance status check skipped:', e?.message || e);
   });
 
@@ -444,18 +446,32 @@ function mergePageGlobals(primary = {}, fallback = {}) {
   };
 }
 
-async function checkMaintenanceStatus(el, actionsEl) {
-  if (!el) return;
+async function checkMaintenanceStatus(el, actionsEl, pillEl) {
+  if (!el && !pillEl) return;
 
   const bundled = await fetchJson(chrome.runtime.getURL('src/generated/ytdlp-meta.json'));
   const latest = await getLatestMaintenanceStatus();
   const notice = buildMaintenanceNotice(bundled, latest);
-  if (!notice) return;
+  if (!notice) {
+    setMaintenancePill(pillEl, 'latest', 'status: 最新', '同梱ロジックは最新互換性メタと同期しています');
+    return;
+  }
 
-  el.textContent = notice.text;
-  el.className = notice.className;
-  el.style.display = 'block';
+  setMaintenancePill(pillEl, notice.pillState, notice.pillText, notice.text);
+  if (el) {
+    el.textContent = notice.text;
+    el.className = notice.className;
+    el.style.display = 'block';
+  }
   if (actionsEl) actionsEl.style.display = 'grid';
+}
+
+function setMaintenancePill(el, state, text, title = '') {
+  if (!el) return;
+  const textEl = el.querySelector('#maintenance-pill-text');
+  el.className = `maint-pill maint-${state}`;
+  el.title = title;
+  if (textEl) textEl.textContent = text;
 }
 
 async function getLatestMaintenanceStatus() {
@@ -509,12 +525,16 @@ function buildMaintenanceNotice(bundled, latest) {
   const className = severity === 'critical'
     ? 'maint-critical'
     : severity === 'info' ? 'maint-info' : 'maint-warn';
-  const title = severity === 'critical' ? '更新が必要です' : '更新を推奨します';
+  const title = severity === 'critical' ? '更新が必要です' : severity === 'info' ? 'お知らせ' : '更新を推奨します';
+  const pillState = severity === 'critical' ? 'required' : severity === 'info' ? 'latest' : 'recommended';
+  const pillText = severity === 'critical' ? 'status: 要更新' : severity === 'info' ? 'status: 情報' : 'status: 更新推奨';
   const syncedMessage = '現在の同梱ロジックは最新互換性メタと同期しています。';
   const message = latest.messageJa && latest.messageJa !== syncedMessage ? latest.messageJa : null;
 
   return {
     className,
+    pillState,
+    pillText,
     text: [title, ...(message ? [message] : []), ...reasons].join('\n')
   };
 }
