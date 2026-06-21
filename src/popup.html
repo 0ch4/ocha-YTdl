@@ -9,10 +9,13 @@
     body {
       width: 360px;
       margin: 0;
-      padding: 12px 14px;
+      padding: 12px 14px 14px;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       font-size: 13px;
-      background: #0f0f0f;
+      background:
+        radial-gradient(circle at top left, rgba(255, 34, 34, 0.14), transparent 32%),
+        radial-gradient(circle at top right, rgba(33, 150, 243, 0.08), transparent 26%),
+        linear-gradient(180deg, #111 0%, #0d0d0d 100%);
       color: #e8e8e8;
     }
 
@@ -53,10 +56,79 @@
     .maint-required { color: #ff6b6b; }
     .maint-required .maint-dot { background: #ff3b30; box-shadow: 0 0 0 2px rgba(255, 59, 48, 0.18); }
 
+    .hero {
+      display: grid;
+      grid-template-columns: 128px 1fr;
+      gap: 10px;
+      align-items: stretch;
+      margin-bottom: 8px;
+      padding: 10px;
+      border: 1px solid #242424;
+      border-radius: 10px;
+      background: linear-gradient(180deg, rgba(26, 26, 26, 0.98), rgba(20, 20, 20, 0.98));
+      box-shadow: 0 12px 24px rgba(0, 0, 0, 0.26);
+    }
+    .hero-thumb {
+      position: relative;
+      overflow: hidden;
+      border-radius: 8px;
+      background: #171717;
+      aspect-ratio: 16 / 9;
+    }
+    .hero-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .hero-duration {
+      position: absolute;
+      right: 6px;
+      bottom: 6px;
+      padding: 2px 5px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      color: #fff;
+      background: rgba(0, 0, 0, 0.72);
+      letter-spacing: 0;
+    }
+    .hero-body {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 8px;
+      min-width: 0;
+    }
     #video-title {
-      font-size: 12px; color: #999;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      margin-bottom: 6px; min-height: 16px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #f2f2f2;
+      line-height: 1.35;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    #video-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+      color: #9ca3af;
+      font-size: 10px;
+      line-height: 1.4;
+      min-height: 16px;
+    }
+    .meta-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 7px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      color: #c9d1d9;
     }
 
     #nsig-status {
@@ -230,7 +302,19 @@
     <span id="version">v0.7.2</span>
   </header>
 
-  <div id="video-title"></div>
+  <section class="hero" aria-label="動画情報">
+    <div class="hero-thumb">
+      <img id="video-thumb" alt="" loading="lazy" decoding="async">
+      <div class="hero-duration" id="video-duration">--:--</div>
+    </div>
+    <div class="hero-body">
+      <div id="video-title"></div>
+      <div id="video-meta">
+        <span class="meta-chip" id="video-source-chip">YouTube</span>
+        <span class="meta-chip" id="video-length-chip">長さ: --:--</span>
+      </div>
+    </div>
+  </section>
   <div id="nsig-status"></div>
   <div id="pot-status"></div>
   <div id="maintenance-status"></div>

@@ -10,6 +10,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const statusEl = document.getElementById('status');
   const errorEl  = document.getElementById('error');
   const titleEl  = document.getElementById('video-title');
+  const thumbEl  = document.getElementById('video-thumb');
+  const durationEl = document.getElementById('video-duration');
+  const sourceChipEl = document.getElementById('video-source-chip');
+  const lengthChipEl = document.getElementById('video-length-chip');
   const nSigEl   = document.getElementById('nsig-status');
   const maintenanceEl = document.getElementById('maintenance-status');
   const maintenanceActionsEl = document.getElementById('maintenance-actions');
@@ -48,6 +52,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const videoId = extractYouTubeVideoId(tab?.url);
+  const isShorts = isShortsUrl(tab?.url);
   _tabId = tab?.id ?? null; // PO Token をページMAIN worldで生成するのに使う
 
   if (!isYoutubeUrl(tab?.url)) {
@@ -113,7 +118,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         return {
           playerResponse: pr ? {
-            videoDetails: pr.videoDetails ? { title: pr.videoDetails.title } : null,
+            videoDetails: pr.videoDetails ? {
+              title: pr.videoDetails.title,
+              lengthSeconds: pr.videoDetails.lengthSeconds || null,
+              isLiveContent: Boolean(pr.videoDetails.isLiveContent),
+              thumbnail: pr.videoDetails.thumbnail || null
+            } : null,
             streamingData: pr.streamingData
           } : null,
           playerJsUrl: jsUrl,
@@ -169,6 +179,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   const title = playerResponse.videoDetails?.title ?? 'video';
+  const videoInfo = buildVideoInfo(playerResponse, videoId, isShorts);
   const { formats: rawFmts, adaptiveFormats: rawAdapt } = playerResponse.streamingData;
   const allFmtsRaw = dedupeRawFormats([...(rawFmts ?? []), ...(rawAdapt ?? [])]);
 
@@ -337,6 +348,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   statusEl.style.display = 'none';
   titleEl.textContent = title;
+  if (sourceChipEl) sourceChipEl.textContent = videoInfo.isShorts ? 'Shorts' : 'YouTube';
+  if (durationEl) durationEl.textContent = videoInfo.durationLabel;
+  if (lengthChipEl) lengthChipEl.textContent = `長さ: ${videoInfo.durationLabel}`;
+  if (thumbEl) {
+    thumbEl.alt = title;
+    thumbEl.src = videoInfo.thumbnailUrl;
+    thumbEl.onerror = () => {
+      if (thumbEl.dataset.fallbackApplied === '1') return;
+      thumbEl.dataset.fallbackApplied = '1';
+      thumbEl.src = `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/hqdefault.jpg`;
+    };
+  }
 
   nSigEl.textContent = nSigOk ? '✓ シグネチャ: 復号OK' : `✗ シグネチャ: 失敗 — ${nSigError ?? ''}`;
   nSigEl.className   = nSigOk ? 'nsig-ok' : 'nsig-fail';
@@ -393,6 +416,15 @@ function extractYouTubeVideoId(url) {
   }
 }
 
+function isShortsUrl(url) {
+  try {
+    const u = new URL(url);
+    return u.pathname.startsWith('/shorts/');
+  } catch (_) {
+    return false;
+  }
+}
+
 function normalizeVideoId(id) {
   return typeof id === 'string' && /^[a-zA-Z0-9_-]{11}$/.test(id) ? id : null;
 }
@@ -419,7 +451,12 @@ async function fetchWatchPageGlobals(videoId) {
 
   return {
     playerResponse: pr ? {
-      videoDetails: pr.videoDetails ? { title: pr.videoDetails.title } : null,
+      videoDetails: pr.videoDetails ? {
+        title: pr.videoDetails.title,
+        lengthSeconds: pr.videoDetails.lengthSeconds || null,
+        isLiveContent: Boolean(pr.videoDetails.isLiveContent),
+        thumbnail: pr.videoDetails.thumbnail || null
+      } : null,
       streamingData: pr.streamingData
     } : null,
     playerJsUrl: jsUrl,
@@ -446,6 +483,42 @@ function mergePageGlobals(primary = {}, fallback = {}) {
       visitorData: primary?.innertube?.visitorData || fallback?.innertube?.visitorData || null
     }
   };
+}
+
+function buildVideoInfo(playerResponse, videoId, isShorts = false) {
+  const details = playerResponse?.videoDetails || {};
+  const thumbnailUrl = pickBestThumbnailUrl(details.thumbnail, videoId);
+  const durationLabel = formatDurationLabel(details.lengthSeconds, details.isLiveContent);
+  return {
+    title: details.title || 'video',
+    thumbnailUrl,
+    durationLabel,
+    isShorts
+  };
+}
+
+function pickBestThumbnailUrl(thumbnail, videoId) {
+  const thumbs = Array.isArray(thumbnail?.thumbnails) ? thumbnail.thumbnails : [];
+  const best = thumbs.reduce((acc, cur) => {
+    if (!acc) return cur;
+    const accScore = (acc.width || 0) * (acc.height || 0);
+    const curScore = (cur.width || 0) * (cur.height || 0);
+    return curScore >= accScore ? cur : acc;
+  }, null);
+  if (best?.url) return best.url;
+  if (videoId) return `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/hqdefault.jpg`;
+  return '';
+}
+
+function formatDurationLabel(seconds, isLive = false) {
+  if (isLive) return 'LIVE';
+  const total = Number(seconds);
+  if (!Number.isFinite(total) || total < 0) return '--:--';
+  const s = Math.floor(total % 60);
+  const m = Math.floor((total / 60) % 60);
+  const h = Math.floor(total / 3600);
+  const pad = n => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
 async function checkMaintenanceStatus(el, actionsEl, pillEl) {
@@ -745,7 +818,12 @@ async function fetchInnertubePlayerResponse(videoId, innertube = {}, clientConfi
 
   return markPlayerResponseSource({
     playabilityStatus: data.playabilityStatus?.status || 'OK',
-    videoDetails: data.videoDetails ? { title: data.videoDetails.title } : null,
+    videoDetails: data.videoDetails ? {
+      title: data.videoDetails.title,
+      lengthSeconds: data.videoDetails.lengthSeconds || null,
+      isLiveContent: Boolean(data.videoDetails.isLiveContent),
+      thumbnail: data.videoDetails.thumbnail || null
+    } : null,
     streamingData: data.streamingData
   }, clientConfig.key);
 }
