@@ -17,17 +17,10 @@ const svg = renderSvg({
   version,
   title,
   duration: '9:41',
-  sourceChip: 'Shorts',
-  lengthChip: '長さ: 9:41',
   maintenance: 'status: 最新',
-  maintenanceHint: '互換性メタは最新です',
   note: '合成中...（ウィンドウを閉じないでください）',
   formatSummary: '表示: ios: 12件 (360p, 720p, 1080p)',
-  maintLine: '同梱ロジックは最新互換性メタと同期しています',
-  videoLabel: '1080p / MP4 / 30fps',
-  videoMeta: 'ios · 82.4 MB',
-  audioLabel: 'medium / M4A',
-  audioMeta: 'ios · 6.1 MB'
+  maintLine: '同梱ロジックは最新互換性メタと同期しています'
 });
 
 await writeFile(OUT_PATH, svg);
@@ -40,7 +33,7 @@ async function readJson(file) {
 function renderSvg(data) {
   const esc = escapeXml;
   return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="360" height="920" viewBox="0 0 360 920" role="img" aria-label="ocha-YTdl popup sample">
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="860" viewBox="0 0 360 860" role="img" aria-label="ocha-YTdl popup sample">
   <defs>
     <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
       <stop offset="0%" stop-color="#111"/>
@@ -51,25 +44,20 @@ function renderSvg(data) {
       <stop offset="48%" stop-color="#c91e1e"/>
       <stop offset="100%" stop-color="#5b0f0f"/>
     </linearGradient>
-    <linearGradient id="button" x1="0" x2="0" y1="0" y2="1">
-      <stop offset="0%" stop-color="#d10000"/>
-      <stop offset="100%" stop-color="#a70000"/>
-    </linearGradient>
     <filter id="shadow" x="-18%" y="-18%" width="136%" height="136%">
       <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity="0.34"/>
     </filter>
-    <filter id="softShadow" x="-18%" y="-18%" width="136%" height="136%">
-      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#000" flood-opacity="0.22"/>
-    </filter>
   </defs>
-  <rect width="360" height="920" fill="url(#bg)"/>
+
+  <rect width="360" height="860" fill="url(#bg)"/>
   <circle cx="56" cy="34" r="86" fill="#ff2a2a" opacity="0.09"/>
   <circle cx="322" cy="44" r="110" fill="#2196f3" opacity="0.08"/>
+
   <g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
     <g transform="translate(14 12)">
       <text x="0" y="13" fill="#ff2222" font-size="14" font-weight="700">ocha-YTdl</text>
-      <g transform="translate(122 0)">
-        <rect x="0" y="0" width="138" height="18" rx="9" fill="#101f2e" stroke="#1f3d59"/>
+      <g transform="translate(84 0)">
+        <rect x="0" y="0" width="154" height="18" rx="9" fill="#101f2e" stroke="#1f3d59"/>
         <circle cx="10" cy="9" r="3.5" fill="#2196f3"/>
         <text x="19" y="12" fill="#e8f4ff" font-size="8.5" font-weight="700">${esc(data.maintenance)}</text>
       </g>
@@ -77,33 +65,34 @@ function renderSvg(data) {
     </g>
 
     <g transform="translate(14 40)">
-      <rect x="0" y="0" width="332" height="182" rx="10" fill="#171717" stroke="#242424" filter="url(#shadow)"/>
-      <rect x="10" y="10" width="128" height="162" rx="8" fill="url(#thumb)"/>
+      <rect x="0" y="0" width="332" height="106" rx="10" fill="#171717" stroke="#242424" filter="url(#shadow)"/>
+
+      <rect x="10" y="10" width="128" height="72" rx="8" fill="url(#thumb)"/>
       <rect x="18" y="18" width="50" height="18" rx="9" fill="rgba(0,0,0,0.56)"/>
       <text x="43" y="31" fill="#fff" font-size="8.5" font-weight="700" text-anchor="middle">SHORTS</text>
-      <path d="M57 73 L57 114 L88 94 Z" fill="#fff" opacity="0.95"/>
-      <rect x="10" y="136" width="128" height="36" rx="0" fill="rgba(0,0,0,0.28)"/>
-      <rect x="10" y="162" width="128" height="5" rx="2.5" fill="rgba(255,255,255,0.16)"/>
-      <rect x="10" y="162" width="86" height="5" rx="2.5" fill="#ff2222"/>
-      <rect x="95" y="144" width="36" height="18" rx="4" fill="rgba(0,0,0,0.76)"/>
-      <text x="113" y="157" fill="#fff" font-size="8.5" font-weight="700" text-anchor="middle">${esc(data.duration)}</text>
+      <path d="M58 34 L58 55 L74 44 Z" fill="#fff" opacity="0.95"/>
+      <rect x="10" y="64" width="128" height="18" rx="0" fill="rgba(0,0,0,0.28)"/>
+      <rect x="10" y="74" width="128" height="4" rx="2" fill="rgba(255,255,255,0.16)"/>
+      <rect x="10" y="74" width="86" height="4" rx="2" fill="#ff2222"/>
+      <rect x="95" y="58" width="36" height="16" rx="4" fill="rgba(0,0,0,0.76)"/>
+      <text x="113" y="70" fill="#fff" font-size="8.5" font-weight="700" text-anchor="middle">${esc(data.duration)}</text>
 
       <g transform="translate(150 14)">
-        ${renderWrappedTitle(data.title, 0, 14, 16, 2)}
-        <text x="0" y="56" fill="#a6a6a6" font-size="9.5">${esc('Shorts / 1080p / 30fps')}</text>
-        <g transform="translate(0 72)">
+        ${renderWrappedTitle(data.title, 0, 0, 15, 3)}
+        <text x="0" y="35" fill="#a6a6a6" font-size="9.5">Shorts / 1080p / 30fps</text>
+        <g transform="translate(0 50)">
           <rect x="0" y="0" width="78" height="18" rx="9" fill="#202020" stroke="#333"/>
-          <text x="39" y="12.5" fill="#e5e5e5" font-size="8.5" font-weight="700" text-anchor="middle">${esc(data.sourceChip)}</text>
+          <text x="39" y="12.5" fill="#e5e5e5" font-size="8.5" font-weight="700" text-anchor="middle">Shorts</text>
           <rect x="84" y="0" width="72" height="18" rx="9" fill="#202020" stroke="#333"/>
           <text x="120" y="12.5" fill="#e5e5e5" font-size="8.5" font-weight="700" text-anchor="middle">1080p</text>
           <rect x="162" y="0" width="60" height="18" rx="9" fill="#202020" stroke="#333"/>
           <text x="192" y="12.5" fill="#e5e5e5" font-size="8.5" font-weight="700" text-anchor="middle">30fps</text>
         </g>
-        <text x="0" y="132" fill="#8e8e8e" font-size="9" font-weight="700">${esc(data.lengthChip)}</text>
+        <text x="0" y="84" fill="#8e8e8e" font-size="9" font-weight="700">長さ: 9:41</text>
       </g>
     </g>
 
-    <g transform="translate(14 238)">
+    <g transform="translate(14 156)">
       <text x="0" y="0" fill="#666" font-size="8.5" font-weight="700" letter-spacing="1.1">品質選択</text>
       <rect x="0" y="10" width="102" height="26" rx="4" fill="#1a1a1a" stroke="#333"/>
       <rect x="110" y="10" width="102" height="26" rx="4" fill="#1a1a1a" stroke="#333"/>
@@ -114,14 +103,14 @@ function renderSvg(data) {
 
       <text x="0" y="58" fill="#666" font-size="8.5" font-weight="700" letter-spacing="1.1">映像フォーマット</text>
       <rect x="0" y="68" width="332" height="56" rx="10" fill="#1a1a1a" stroke="#2a2a2a"/>
-      <text x="14" y="90" fill="#f0f0f0" font-size="12.5" font-weight="600">${esc(data.videoLabel)}</text>
-      <text x="14" y="108" fill="#8a8a8a" font-size="9.5">${esc(data.videoMeta)}</text>
+      <text x="14" y="90" fill="#f0f0f0" font-size="12.5" font-weight="600">1080p / MP4 / 30fps</text>
+      <text x="14" y="108" fill="#8a8a8a" font-size="9.5">ios · 82.4 MB</text>
       <text x="316" y="99" fill="#a0a0a0" font-size="16" text-anchor="middle">▾</text>
 
       <text x="0" y="146" fill="#666" font-size="8.5" font-weight="700" letter-spacing="1.1">音声フォーマット</text>
       <rect x="0" y="156" width="332" height="56" rx="10" fill="#1a1a1a" stroke="#2a2a2a"/>
-      <text x="14" y="178" fill="#f0f0f0" font-size="12.5" font-weight="600">${esc(data.audioLabel)}</text>
-      <text x="14" y="196" fill="#8a8a8a" font-size="9.5">${esc(data.audioMeta)}</text>
+      <text x="14" y="178" fill="#f0f0f0" font-size="12.5" font-weight="600">medium / M4A</text>
+      <text x="14" y="196" fill="#8a8a8a" font-size="9.5">ios · 6.1 MB</text>
       <text x="316" y="187" fill="#a0a0a0" font-size="16" text-anchor="middle">▾</text>
 
       <rect x="0" y="226" width="106" height="28" rx="4" fill="#cc0000"/>
@@ -139,24 +128,33 @@ function renderSvg(data) {
       <text x="0" y="358" fill="#64b5f6" font-size="8.5">${esc(data.maintLine)}</text>
     </g>
 
-    <g transform="translate(14 640)">
+    <g transform="translate(14 520)">
       <text x="0" y="0" fill="#666" font-size="8.5" font-weight="700" letter-spacing="1.1">動画 + 音声</text>
-      <rect x="0" y="10" width="332" height="44" rx="6" fill="#1a1a1a" stroke="#2a2a2a"/>
-      <text x="12" y="28" fill="#f0f0f0" font-size="11.5" font-weight="600">1080p / MP4 / 30fps</text>
-      <text x="12" y="42" fill="#666" font-size="8.5">MP4 · 82.4 MB · ios</text>
-      <text x="314" y="35" fill="#a0a0a0" font-size="14" text-anchor="middle">DL</text>
+      <rect x="0" y="10" width="332" height="44" rx="5" fill="#1a1a1a" stroke="#2a2a2a"/>
+      <text x="10" y="28" fill="#f0f0f0" font-size="11.5" font-weight="600">1080p / MP4 / 30fps</text>
+      <text x="10" y="42" fill="#666" font-size="8.5">MP4 · 82.4 MB · ios</text>
+      <rect x="290" y="18" width="28" height="20" rx="3" fill="#2a2a2a" stroke="#3a3a3a"/>
+      <text x="304" y="32" fill="#ddd" font-size="9" font-weight="700" text-anchor="middle">コピー</text>
+      <rect x="298" y="18" width="26" height="20" rx="3" fill="#cc0000"/>
+      <text x="311" y="32" fill="#fff" font-size="9" font-weight="700" text-anchor="middle">DL</text>
 
       <text x="0" y="78" fill="#666" font-size="8.5" font-weight="700" letter-spacing="1.1">映像のみ</text>
-      <rect x="0" y="88" width="332" height="44" rx="6" fill="#1a1a1a" stroke="#2a2a2a"/>
-      <text x="12" y="106" fill="#f0f0f0" font-size="11.5" font-weight="600">720p / MP4 / 30fps</text>
-      <text x="12" y="120" fill="#666" font-size="8.5">MP4 · 31.1 MB · tv</text>
-      <text x="314" y="113" fill="#a0a0a0" font-size="14" text-anchor="middle">DL</text>
+      <rect x="0" y="88" width="332" height="44" rx="5" fill="#1a1a1a" stroke="#2a2a2a"/>
+      <text x="10" y="106" fill="#f0f0f0" font-size="11.5" font-weight="600">720p / MP4 / 30fps</text>
+      <text x="10" y="120" fill="#666" font-size="8.5">MP4 · 31.1 MB · tv</text>
+      <rect x="290" y="96" width="28" height="20" rx="3" fill="#2a2a2a" stroke="#3a3a3a"/>
+      <text x="304" y="110" fill="#ddd" font-size="9" font-weight="700" text-anchor="middle">コピー</text>
+      <rect x="298" y="96" width="26" height="20" rx="3" fill="#cc0000"/>
+      <text x="311" y="110" fill="#fff" font-size="9" font-weight="700" text-anchor="middle">DL</text>
 
       <text x="0" y="156" fill="#666" font-size="8.5" font-weight="700" letter-spacing="1.1">音声のみ</text>
-      <rect x="0" y="166" width="332" height="44" rx="6" fill="#1a1a1a" stroke="#2a2a2a"/>
-      <text x="12" y="184" fill="#f0f0f0" font-size="11.5" font-weight="600">medium / M4A</text>
-      <text x="12" y="198" fill="#666" font-size="8.5">M4A · 6.1 MB · ios</text>
-      <text x="314" y="191" fill="#a0a0a0" font-size="14" text-anchor="middle">DL</text>
+      <rect x="0" y="166" width="332" height="44" rx="5" fill="#1a1a1a" stroke="#2a2a2a"/>
+      <text x="10" y="184" fill="#f0f0f0" font-size="11.5" font-weight="600">medium / M4A</text>
+      <text x="10" y="198" fill="#666" font-size="8.5">M4A · 6.1 MB · ios</text>
+      <rect x="290" y="174" width="28" height="20" rx="3" fill="#2a2a2a" stroke="#3a3a3a"/>
+      <text x="304" y="188" fill="#ddd" font-size="9" font-weight="700" text-anchor="middle">コピー</text>
+      <rect x="298" y="174" width="26" height="20" rx="3" fill="#cc0000"/>
+      <text x="311" y="188" fill="#fff" font-size="9" font-weight="700" text-anchor="middle">DL</text>
     </g>
   </g>
 </svg>
@@ -169,7 +167,7 @@ function renderWrappedTitle(text, x, y, fontSize, maxLines) {
   let current = '';
   for (const word of words) {
     const next = current ? `${current} ${word}` : word;
-    if (next.length > 24 && current && lines.length < maxLines - 1) {
+    if (next.length > 20 && current && lines.length < maxLines - 1) {
       lines.push(current);
       current = word;
       continue;
