@@ -1073,8 +1073,8 @@ async function downloadFormat(fmt, videoTitle, kind) {
 
     // adaptive(DASH) は部分レンジ必須（Rangeなし or 全体レンジは403）→ チャンクDL
     const label = kind === 'audio' ? '音声' : '映像';
-    setMuxProgress(`${label}をダウンロード中...`);
-    const bytes = await fetchFormatBytes(fmt, p => setMuxProgress(`${label}DL中... ${p}%`));
+    setMuxProgress(`${label}をダウンロード中...（ウィンドウを閉じないでください）`);
+    const bytes = await fetchFormatBytes(fmt, p => setMuxProgress(`${label}DL中... ${p}%（閉じないで）`));
     clearMuxProgress();
 
     const blob = new Blob([bytes], { type: fmt.mimeType || 'application/octet-stream' });
@@ -1113,7 +1113,15 @@ let _videoId = null;
 let _tabId = null;
 let _lastPotError = null; // 直近のPO Token生成失敗理由（UIに表示する）
 
-async function ensurePot() {
+let _potPromise = null;
+function ensurePot() {
+  if (_pot) return Promise.resolve(_pot);
+  if (_potPromise) return _potPromise; // 並列DL中の多重生成を防ぐ
+  _potPromise = _ensurePotOnce().finally(() => { _potPromise = null; });
+  return _potPromise;
+}
+
+async function _ensurePotOnce() {
   if (_pot) return _pot;
 
   // 1) 将来: 自前サーバの pot provider
@@ -1256,21 +1264,31 @@ async function fetchFormatBytes(fmt, onProgress) {
   }
 
   const chunkSize = Math.min(RANGE_CHUNK_SIZE, Math.max(1, Math.ceil(total / 2)));
-  const out = new Uint8Array(total);
-  let offset = 0;
-  let first = true;
 
+  // チャンク範囲を列挙し、複数同時に取得して高速化（ブラウザ同様の並列接続）。
+  const ranges = [];
   for (let start = 0; start < total; start += chunkSize) {
-    if (!first) await delay(150); // バースト抑制（連続リクエストでの制限回避）
-    first = false;
-    const end = Math.min(start + chunkSize, total) - 1;
-    const part = await fetchRange(fmt.url, start, end, fmt);
-    out.set(part, offset);
-    offset += part.length;
-    if (onProgress) onProgress(Math.floor((offset / total) * 100));
+    ranges.push([start, Math.min(start + chunkSize, total) - 1]);
   }
 
-  if (offset !== total) throw new Error(`サイズ不一致: ${offset}/${total}`);
+  const out = new Uint8Array(total);
+  let done = 0;
+  let next = 0;
+  const CONCURRENCY = Math.min(4, ranges.length);
+
+  async function worker() {
+    while (next < ranges.length) {
+      const [s, e] = ranges[next++];
+      const part = await fetchRange(fmt.url, s, e, fmt);
+      out.set(part, s);
+      done += part.length;
+      if (onProgress) onProgress(Math.floor((done / total) * 100));
+    }
+  }
+
+  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+
+  if (done !== total) throw new Error(`サイズ不一致: ${done}/${total}`);
   return out;
 }
 

@@ -57,7 +57,7 @@ The extension can save video and audio separately. It can also mux the selected 
 
 Muxing runs in browser memory. Large inputs can fail because of memory limits, so choose a lower resolution or download video and audio separately if muxing fails.
 
-Some high-resolution formats return `403` for plain GET requests and only work with HTTP Range requests. When detected, this extension downloads those formats in ranged chunks and saves them as a Blob.
+Some high-resolution formats return `403` for plain GET requests and only work with HTTP Range requests. When detected, this extension downloads those formats in parallel ranged chunks and saves them as a Blob.
 
 URLs that only allow the first range and reject later ranges cannot be saved. The extension rejects them before starting the download.
 
