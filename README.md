@@ -16,6 +16,7 @@ English README: [README_EN.md](README_EN.md)
 - YouTube の `n` challenge / signature を sandbox ページ内で解決
 - PO Token の生成・検出を試行し、高解像度フォーマットの取得成功率を改善
 - YouTube を開いているタブでは拡張機能アイコンを有効化し、それ以外では無効化
+- GitHub 上の互換性メタ JSON を確認し、YouTube 抽出ロジックの更新推奨を表示
 
 ## ローカルインストール
 
@@ -30,6 +31,8 @@ English README: [README_EN.md](README_EN.md)
 manifest.json
 src/
   background.js
+  generated/
+    ytdlp-meta.json
   popup.html
   popup.js
 sandbox/
@@ -43,13 +46,24 @@ vendor/
   meriyah.min.js
   yt.solver.core.js
 tools/
+  check-ytdlp-upstream.mjs
   probe-formats.mjs
 docs/
+  compat/
+    latest.json
   images/
     popup-sample.svg
 ```
 
 この拡張機能はビルド工程なしで動作する構成です。`manifest.json` と HTML 内のパスは、このフォルダ構成を前提にした相対パスです。
+
+## 互換性メタと更新推奨
+
+YouTube 抽出周りは yt-dlp 側でも頻繁に変更されます。この拡張機能は実行時に外部 JavaScript/WASM を読み込まず、同梱済みコードだけで動作します。
+
+代わりに、`src/generated/ytdlp-meta.json` と GitHub 上の `docs/compat/latest.json` を比較し、同梱ロジックが古い可能性がある場合だけポップアップに更新推奨を表示します。この取得は JSON データの確認のみで、リモートコード実行は行いません。
+
+リポジトリでは GitHub Actions が `tools/check-ytdlp-upstream.mjs` を定期実行し、yt-dlp の最新リリースが同梱メタより新しい場合に `docs/compat/latest.json` を更新する PR を作成します。
 
 ## 注意点
 

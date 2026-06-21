@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-06-21T05:42:34.804Z",
+  "latestExtensionVersion": "0.7.2",
+  "minimumRecommended": {
+    "ytDlpRelease": "2026.06.09",
+    "ejsVersion": "0.8.0"
+  },
+  "severity": "ok",
+  "messageJa": "現在の同梱ロジックは最新互換性メタと同期しています。",
+  "messageEn": "Bundled logic is in sync with the latest compatibility metadata.",
+  "upstream": {
+    "ytDlpRelease": "2026.06.09",
+    "ytDlpUrl": "https://github.com/yt-dlp/yt-dlp/releases/tag/2026.06.09",
+    "publishedAt": "2026-06-09T23:26:57Z"
+  }
+}

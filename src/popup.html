@@ -53,6 +53,20 @@
     .pot-ok   { background: #0a2a0a; color: #4caf50; }
     .pot-warn { background: #2a230a; color: #e0b000; }
 
+    #maintenance-status {
+      display: none;
+      font-size: 10px;
+      padding: 5px 7px;
+      border-radius: 4px;
+      margin-bottom: 8px;
+      line-height: 1.35;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .maint-info { background: #101f2e; color: #64b5f6; }
+    .maint-warn { background: #2a230a; color: #e0b000; }
+    .maint-critical { background: #2a0a0a; color: #ff6b6b; }
+
     #status { font-size: 12px; color: #888; padding: 6px 0; }
     #error  { font-size: 12px; color: #ff6b6b; padding: 6px 0; display: none; }
 
@@ -175,6 +189,7 @@
   <div id="video-title"></div>
   <div id="nsig-status"></div>
   <div id="pot-status"></div>
+  <div id="maintenance-status"></div>
   <div id="status">読み込み中...</div>
   <div id="error"></div>
 

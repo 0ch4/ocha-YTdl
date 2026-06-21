@@ -1,0 +1,47 @@
+name: Check yt-dlp upstream
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 18 * * *'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Update compatibility metadata
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node tools/check-ytdlp-upstream.mjs
+
+      - name: Create pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet -- docs/compat/latest.json; then
+            echo "No changes"
+            exit 0
+          fi
+
+          branch="bot/ytdlp-compat-${GITHUB_RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add docs/compat/latest.json
+          git commit -m "Update yt-dlp compatibility metadata"
+          git push origin "$branch"
+          gh pr create \
+            --title "Update yt-dlp compatibility metadata" \
+            --body "yt-dlp upstream compatibility metadata changed. Review whether bundled YouTube extraction logic, EJS solver, or client definitions need to be updated." \
+            --base main \
+            --head "$branch"

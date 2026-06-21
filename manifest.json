@@ -14,7 +14,8 @@
   "host_permissions": [
     "*://*.youtube.com/*",
     "*://*.googlevideo.com/*",
-    "https://jnn-pa.googleapis.com/*"
+    "https://jnn-pa.googleapis.com/*",
+    "https://raw.githubusercontent.com/0ch4/ocha-YTdl/*"
   ],
   "action": {
     "default_popup": "src/popup.html",

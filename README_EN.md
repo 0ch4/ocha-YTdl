@@ -14,6 +14,7 @@ Chrome Manifest V3 extension for inspecting and downloading YouTube video format
 - Resolves YouTube `n` and signature challenges in a sandboxed page.
 - Attempts PO Token generation and capture to improve high-resolution format access.
 - Enables the extension action on YouTube tabs and disables it elsewhere.
+- Checks hosted compatibility metadata JSON and shows an update recommendation when bundled YouTube extraction logic may be stale.
 
 ## Install locally
 
@@ -28,6 +29,8 @@ Chrome Manifest V3 extension for inspecting and downloading YouTube video format
 manifest.json
 src/
   background.js
+  generated/
+    ytdlp-meta.json
   popup.html
   popup.js
 sandbox/
@@ -41,13 +44,24 @@ vendor/
   meriyah.min.js
   yt.solver.core.js
 tools/
+  check-ytdlp-upstream.mjs
   probe-formats.mjs
 docs/
+  compat/
+    latest.json
   images/
     popup-sample.svg
 ```
 
 The extension is intentionally build-free. All paths in `manifest.json` and HTML files are relative to this repository layout.
+
+## Compatibility Metadata
+
+YouTube extraction changes frequently in yt-dlp. This extension does not execute remote JavaScript or WebAssembly at runtime; it only runs code bundled in the extension package.
+
+Instead, it compares bundled metadata in `src/generated/ytdlp-meta.json` with hosted JSON metadata at `docs/compat/latest.json` and displays an update recommendation when the bundled logic may be stale. This is data-only JSON fetching, not remote code execution.
+
+The repository includes a GitHub Actions workflow that runs `tools/check-ytdlp-upstream.mjs` on a schedule. When the latest yt-dlp release is newer than the bundled metadata, it updates `docs/compat/latest.json` and opens a pull request.
 
 ## Notes
 

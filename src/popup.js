@@ -1,11 +1,14 @@
 const DEFAULT_INNERTUBE_API_KEY = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
 const RANGE_CHUNK_SIZE = 10 << 20; // 10MB — matches yt-dlp's CHUNK_SIZE
+const MAINTENANCE_STATUS_URL = 'https://raw.githubusercontent.com/0ch4/ocha-YTdl/main/docs/compat/latest.json';
+const MAINTENANCE_STATUS_CACHE_MS = 24 * 60 * 60 * 1000;
 
 document.addEventListener('DOMContentLoaded', async () => {
   const statusEl = document.getElementById('status');
   const errorEl  = document.getElementById('error');
   const titleEl  = document.getElementById('video-title');
   const nSigEl   = document.getElementById('nsig-status');
+  const maintenanceEl = document.getElementById('maintenance-status');
   const iframe   = document.getElementById('solver-iframe');
   const qualityPicker = document.getElementById('quality-picker');
   const qualityNote = document.getElementById('quality-note');
@@ -23,6 +26,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     downloadMux: document.getElementById('download-mux-selected'),
     qualityNote
   };
+
+  checkMaintenanceStatus(maintenanceEl).catch(e => {
+    console.info('[ytdl] Maintenance status check skipped:', e?.message || e);
+  });
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const videoId = extractYouTubeVideoId(tab?.url);
@@ -424,6 +431,92 @@ function mergePageGlobals(primary = {}, fallback = {}) {
       visitorData: primary?.innertube?.visitorData || fallback?.innertube?.visitorData || null
     }
   };
+}
+
+async function checkMaintenanceStatus(el) {
+  if (!el) return;
+
+  const bundled = await fetchJson(chrome.runtime.getURL('src/generated/ytdlp-meta.json'));
+  const latest = await getLatestMaintenanceStatus();
+  const notice = buildMaintenanceNotice(bundled, latest);
+  if (!notice) return;
+
+  el.textContent = notice.text;
+  el.className = notice.className;
+  el.style.display = 'block';
+}
+
+async function getLatestMaintenanceStatus() {
+  const cacheKey = 'maintenanceStatusCache';
+  try {
+    const cached = await chrome.storage.local.get(cacheKey);
+    const entry = cached?.[cacheKey];
+    if (entry?.fetchedAt && entry?.data && Date.now() - entry.fetchedAt < MAINTENANCE_STATUS_CACHE_MS) {
+      return entry.data;
+    }
+  } catch (_) {}
+
+  const latest = await fetchJson(MAINTENANCE_STATUS_URL, { cache: 'no-store' });
+  if (latest?.schemaVersion !== 1) {
+    throw new Error('invalid maintenance status schema');
+  }
+
+  try {
+    await chrome.storage.local.set({ [cacheKey]: { fetchedAt: Date.now(), data: latest } });
+  } catch (_) {}
+
+  return latest;
+}
+
+async function fetchJson(url, options = {}) {
+  const resp = await fetch(url, options);
+  if (!resp.ok) throw new Error(`fetch failed: ${resp.status}`);
+  return resp.json();
+}
+
+function buildMaintenanceNotice(bundled, latest) {
+  if (!bundled || !latest) return null;
+
+  const currentVersion = chrome.runtime.getManifest().version;
+  const min = latest.minimumRecommended || {};
+  const reasons = [];
+
+  if (latest.latestExtensionVersion && compareVersionText(latest.latestExtensionVersion, currentVersion) > 0) {
+    reasons.push(`拡張 v${latest.latestExtensionVersion} が利用可能です`);
+  }
+  if (min.ytDlpRelease && compareVersionText(min.ytDlpRelease, bundled.ytDlpRelease) > 0) {
+    reasons.push(`yt-dlp互換性メタ: ${bundled.ytDlpRelease || 'unknown'} → ${min.ytDlpRelease}`);
+  }
+  if (min.ejsVersion && compareVersionText(min.ejsVersion, bundled.ejsVersion) > 0) {
+    reasons.push(`EJS solver: ${bundled.ejsVersion || 'unknown'} → ${min.ejsVersion}`);
+  }
+
+  const severity = latest.severity || (reasons.length ? 'recommended' : 'ok');
+  if (severity === 'ok' && reasons.length === 0) return null;
+
+  const className = severity === 'critical'
+    ? 'maint-critical'
+    : severity === 'info' ? 'maint-info' : 'maint-warn';
+  const title = severity === 'critical' ? '更新が必要です' : '更新を推奨します';
+  const syncedMessage = '現在の同梱ロジックは最新互換性メタと同期しています。';
+  const message = latest.messageJa && latest.messageJa !== syncedMessage ? latest.messageJa : null;
+
+  return {
+    className,
+    text: [title, ...(message ? [message] : []), ...reasons].join('\n')
+  };
+}
+
+function compareVersionText(a, b) {
+  const pa = String(a || '').match(/\d+/g)?.map(Number) || [];
+  const pb = String(b || '').match(/\d+/g)?.map(Number) || [];
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const av = pa[i] || 0;
+    const bv = pb[i] || 0;
+    if (av !== bv) return av > bv ? 1 : -1;
+  }
+  return 0;
 }
 
 function extractYtcfgData(text) {
