@@ -23,6 +23,20 @@ Chrome Manifest V3 extension for inspecting and downloading YouTube video format
 3. Click `Load unpacked`.
 4. Select this repository folder.
 
+## Updating
+
+Because this is an unpacked extension, Chrome does not automatically pull updates from GitHub.
+
+Japanese update instructions for ZIP overwrite and `git pull` installs are available in [docs/UPDATE_JA.md](docs/UPDATE_JA.md).
+
+For Git-based installs, run this from the repository:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\update-local.ps1
+```
+
+After updating files, reload `ocha-YTdl` from `chrome://extensions`.
+
 ## Layout
 
 ```text
@@ -46,7 +60,9 @@ vendor/
 tools/
   check-ytdlp-upstream.mjs
   probe-formats.mjs
+  update-local.ps1
 docs/
+  UPDATE_JA.md
   compat/
     latest.json
   images/

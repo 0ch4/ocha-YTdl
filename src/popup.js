@@ -2,6 +2,7 @@ const DEFAULT_INNERTUBE_API_KEY = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
 const RANGE_CHUNK_SIZE = 10 << 20; // 10MB — matches yt-dlp's CHUNK_SIZE
 const MAINTENANCE_STATUS_URL = 'https://raw.githubusercontent.com/0ch4/ocha-YTdl/main/docs/compat/latest.json';
 const MAINTENANCE_STATUS_CACHE_MS = 24 * 60 * 60 * 1000;
+const UPDATE_GUIDE_URL = 'https://github.com/0ch4/ocha-YTdl/blob/main/docs/UPDATE_JA.md';
 
 document.addEventListener('DOMContentLoaded', async () => {
   const statusEl = document.getElementById('status');
@@ -9,6 +10,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   const titleEl  = document.getElementById('video-title');
   const nSigEl   = document.getElementById('nsig-status');
   const maintenanceEl = document.getElementById('maintenance-status');
+  const maintenanceActionsEl = document.getElementById('maintenance-actions');
+  const updateGuideBtn = document.getElementById('open-update-guide');
+  const reloadExtensionBtn = document.getElementById('reload-extension');
   const iframe   = document.getElementById('solver-iframe');
   const qualityPicker = document.getElementById('quality-picker');
   const qualityNote = document.getElementById('quality-note');
@@ -27,7 +31,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     qualityNote
   };
 
-  checkMaintenanceStatus(maintenanceEl).catch(e => {
+  updateGuideBtn?.addEventListener('click', () => {
+    chrome.tabs.create({ url: UPDATE_GUIDE_URL });
+  });
+  reloadExtensionBtn?.addEventListener('click', () => {
+    chrome.runtime.reload();
+  });
+
+  checkMaintenanceStatus(maintenanceEl, maintenanceActionsEl).catch(e => {
     console.info('[ytdl] Maintenance status check skipped:', e?.message || e);
   });
 
@@ -433,7 +444,7 @@ function mergePageGlobals(primary = {}, fallback = {}) {
   };
 }
 
-async function checkMaintenanceStatus(el) {
+async function checkMaintenanceStatus(el, actionsEl) {
   if (!el) return;
 
   const bundled = await fetchJson(chrome.runtime.getURL('src/generated/ytdlp-meta.json'));
@@ -444,6 +455,7 @@ async function checkMaintenanceStatus(el) {
   el.textContent = notice.text;
   el.className = notice.className;
   el.style.display = 'block';
+  if (actionsEl) actionsEl.style.display = 'grid';
 }
 
 async function getLatestMaintenanceStatus() {

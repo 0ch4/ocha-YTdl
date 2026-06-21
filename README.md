@@ -25,6 +25,20 @@ English README: [README_EN.md](README_EN.md)
 3. `パッケージ化されていない拡張機能を読み込む` をクリック
 4. このリポジトリのフォルダを選択する
 
+## 更新方法
+
+Chrome Web Store 経由ではないため、GitHub 上の更新は自動では反映されません。
+
+ZIP をダウンロードして上書きする方法と、`git pull` で更新する方法を [docs/UPDATE_JA.md](docs/UPDATE_JA.md) にまとめています。
+
+Git で導入している場合は、リポジトリ内で次のコマンドを実行できます。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\update-local.ps1
+```
+
+更新後は `chrome://extensions` で `ocha-YTdl` を再読み込みしてください。
+
 ## フォルダ構成
 
 ```text
@@ -48,7 +62,9 @@ vendor/
 tools/
   check-ytdlp-upstream.mjs
   probe-formats.mjs
+  update-local.ps1
 docs/
+  UPDATE_JA.md
   compat/
     latest.json
   images/

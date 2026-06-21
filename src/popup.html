@@ -66,6 +66,18 @@
     .maint-info { background: #101f2e; color: #64b5f6; }
     .maint-warn { background: #2a230a; color: #e0b000; }
     .maint-critical { background: #2a0a0a; color: #ff6b6b; }
+    #maintenance-actions {
+      display: none;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin: -4px 0 8px;
+    }
+    .maint-btn {
+      background: #202020; color: #ddd;
+      border: 1px solid #3a3a3a; border-radius: 4px;
+      padding: 6px 7px; font-size: 11px; font-weight: 600; cursor: pointer;
+    }
+    .maint-btn:hover { background: #2a2a2a; color: #fff; }
 
     #status { font-size: 12px; color: #888; padding: 6px 0; }
     #error  { font-size: 12px; color: #ff6b6b; padding: 6px 0; display: none; }
@@ -190,6 +202,10 @@
   <div id="nsig-status"></div>
   <div id="pot-status"></div>
   <div id="maintenance-status"></div>
+  <div id="maintenance-actions">
+    <button class="maint-btn" id="open-update-guide">更新手順</button>
+    <button class="maint-btn" id="reload-extension">再読み込み</button>
+  </div>
   <div id="status">読み込み中...</div>
   <div id="error"></div>
 
