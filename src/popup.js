@@ -36,6 +36,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     downloadAudio: document.getElementById('download-audio-selected'),
     downloadPair: document.getElementById('download-pair-selected'),
     downloadMux: document.getElementById('download-mux-selected'),
+    trimRange: document.getElementById('trim-range-input'),
     trimStart: document.getElementById('trim-start-input'),
     trimEnd: document.getElementById('trim-end-input'),
     qualityNote
@@ -1157,8 +1158,15 @@ function getSelectedFormat(select) {
 }
 
 function getTrimRangeFromInputs(els) {
-  const startRaw = els.trimStart?.value?.trim() || '';
-  const endRaw = els.trimEnd?.value?.trim() || '';
+  const rangeRaw = els.trimRange?.value?.trim() || '';
+  const rangeParts = rangeRaw ? parseTrimRangeText(rangeRaw) : null;
+  if (rangeRaw && !rangeParts) {
+    alert('切り出し範囲は 5-10、0:05~0:10、1:02:03-1:03:00 の形式で入力してください');
+    return false;
+  }
+
+  const startRaw = rangeParts ? rangeParts.start : (els.trimStart?.value?.trim() || '');
+  const endRaw = rangeParts ? rangeParts.end : (els.trimEnd?.value?.trim() || '');
   if (!startRaw && !endRaw) return null;
 
   const start = startRaw ? parseTimeInput(startRaw) : 0;
@@ -1175,8 +1183,19 @@ function getTrimRangeFromInputs(els) {
     start,
     end,
     startText: formatSecondsForFfmpeg(start),
-    endText: end == null ? null : formatSecondsForFfmpeg(end)
+    endText: end == null ? null : formatSecondsForFfmpeg(end),
+    durationText: end == null ? null : formatSecondsForFfmpeg(end - start)
   };
+}
+
+function parseTrimRangeText(value) {
+  const normalized = value
+    .replace(/[〜～~]/g, '-')
+    .replace(/[–—]/g, '-')
+    .trim();
+  const match = normalized.match(/^(.+?)(?:\s*-\s*|\s+to\s+|\s+)(.+)$/i);
+  if (!match) return null;
+  return { start: match[1].trim(), end: match[2].trim() };
 }
 
 function parseTimeInput(value) {
@@ -1633,7 +1652,7 @@ async function muxStreams(videoBytes, audioBytes, names, trim = null) {
       audioName: names.audio,
       outName: names.out
     };
-    if (trim) msg.trim = { start: trim.startText, end: trim.endText };
+    if (trim) msg.trim = { start: trim.startText, end: trim.endText, duration: trim.durationText };
     if (wasmBinary) msg.wasmBinary = wasmBinary; // 転送せずコピー（キャッシュ維持）
     iframe.contentWindow.postMessage(msg, '*', [videoBytes.buffer, audioBytes.buffer]);
   });
@@ -1677,7 +1696,7 @@ async function trimSingleStream(bytes, fmt, trim) {
       input: bytes.buffer,
       inputName,
       outName: fsOutName,
-      trim: { start: trim.startText, end: trim.endText }
+      trim: { start: trim.startText, end: trim.endText, duration: trim.durationText }
     };
     if (wasmBinary) msg.wasmBinary = wasmBinary;
     iframe.contentWindow.postMessage(msg, '*', [bytes.buffer]);
@@ -1838,6 +1857,7 @@ function buildItem(fmt, videoTitle) {
 
   li.querySelector('.dl-btn').addEventListener('click', async () => {
     const trim = getTrimRangeFromInputs({
+      trimRange: document.getElementById('trim-range-input'),
       trimStart: document.getElementById('trim-start-input'),
       trimEnd: document.getElementById('trim-end-input')
     });

@@ -230,6 +230,7 @@
       grid-template-columns: 1fr 1fr;
       gap: 6px;
     }
+    .trim-range-input { grid-column: 1 / -1; }
     .trim-input {
       min-width: 0;
       background: #1a1a1a; color: #e8e8e8;
@@ -361,8 +362,9 @@
       <select class="picker-select" id="audio-format-select" aria-label="音声フォーマット"></select>
     </div>
     <div class="picker-row">
-      <div class="picker-label">切り出し範囲（任意）</div>
+      <div class="picker-label">切り出し範囲（任意 / 例: 5-10, 0:05~0:10）</div>
       <div class="trim-inputs">
+        <input class="trim-input trim-range-input" id="trim-range-input" type="text" inputmode="numeric" placeholder="範囲 0:05~0:10" aria-label="切り出し範囲">
         <input class="trim-input" id="trim-start-input" type="text" inputmode="numeric" placeholder="開始 0:05" aria-label="切り出し開始時刻">
         <input class="trim-input" id="trim-end-input" type="text" inputmode="numeric" placeholder="終了 0:10" aria-label="切り出し終了時刻">
       </div>

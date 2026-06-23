@@ -62,24 +62,31 @@
           data.audio = null;
 
           // -c copy : stream copy, no re-encode (fast, lossless)
-          var args = [];
-          if (data.trim && data.trim.start) args.push('-ss', data.trim.start);
-          if (data.trim && data.trim.end) args.push('-to', data.trim.end);
-          args.push('-i', vName);
-          if (data.trim && data.trim.start) args.push('-ss', data.trim.start);
-          if (data.trim && data.trim.end) args.push('-to', data.trim.end);
-          args.push('-i', aName, '-c', 'copy');
-          if (/\.(?:mp4|m4a|mov)$/i.test(oName)) args.push('-movflags', '+faststart');
-          args.push(oName);
+          var muxOutName = data.trim ? ('full_' + oName) : oName;
+          var args = ['-i', vName, '-i', aName, '-c', 'copy'];
+          if (/\.(?:mp4|m4a|mov)$/i.test(muxOutName)) args.push('-movflags', '+faststart');
+          args.push(muxOutName);
           var rc = Module.exec.apply(Module, args);
 
           if (rc !== 0) throw new Error('ffmpeg exited with code ' + rc + '\n' + logs.slice(-12).join('\n'));
+
+          if (data.trim) {
+            var cutArgs = ['-i', muxOutName];
+            if (data.trim.start) cutArgs.push('-ss', data.trim.start);
+            if (data.trim.duration) cutArgs.push('-t', data.trim.duration);
+            cutArgs.push('-c', 'copy');
+            if (/\.(?:mp4|m4a|mov)$/i.test(oName)) cutArgs.push('-movflags', '+faststart');
+            cutArgs.push(oName);
+            var cutRc = Module.exec.apply(Module, cutArgs);
+            if (cutRc !== 0) throw new Error('ffmpeg trim exited with code ' + cutRc + '\n' + logs.slice(-12).join('\n'));
+          }
 
           var out = Module.FS.readFile(oName);
 
           // tidy up MEMFS so repeated muxes don't accumulate
           try { Module.FS.unlink(vName); } catch (_) {}
           try { Module.FS.unlink(aName); } catch (_) {}
+          if (data.trim) { try { Module.FS.unlink(muxOutName); } catch (_) {} }
           try { Module.FS.unlink(oName); } catch (_) {}
 
           var buf = out.buffer;
@@ -107,10 +114,10 @@
           TrimModule.FS.writeFile(inName, new Uint8Array(data.input));
           data.input = null;
 
-          var trimArgs = [];
+          var trimArgs = ['-i', inName];
           if (data.trim && data.trim.start) trimArgs.push('-ss', data.trim.start);
-          if (data.trim && data.trim.end) trimArgs.push('-to', data.trim.end);
-          trimArgs.push('-i', inName, '-c', 'copy');
+          if (data.trim && data.trim.duration) trimArgs.push('-t', data.trim.duration);
+          trimArgs.push('-c', 'copy');
           if (/\.(?:mp4|m4a|mov)$/i.test(outName)) trimArgs.push('-movflags', '+faststart');
           trimArgs.push(outName);
           var trimRc = TrimModule.exec.apply(TrimModule, trimArgs);
