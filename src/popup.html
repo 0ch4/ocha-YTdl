@@ -225,6 +225,18 @@
       border: 1px solid #333; border-radius: 4px;
       padding: 6px 7px; font-size: 12px;
     }
+    .trim-inputs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+    .trim-input {
+      min-width: 0;
+      background: #1a1a1a; color: #e8e8e8;
+      border: 1px solid #333; border-radius: 4px;
+      padding: 6px 7px; font-size: 12px;
+    }
+    .trim-input::placeholder { color: #666; }
     .picker-btn {
       background: #cc0000; color: #fff;
       border: none; border-radius: 4px;
@@ -307,7 +319,7 @@
       <span class="maint-dot"></span>
       <span id="maintenance-pill-text">status: 確認中</span>
     </span>
-    <span id="version">v0.8.0</span>
+    <span id="version">v0.8.1</span>
   </header>
 
   <section class="hero" aria-label="動画情報">
@@ -347,6 +359,13 @@
     <div class="picker-row">
       <div class="picker-label">音声フォーマット</div>
       <select class="picker-select" id="audio-format-select" aria-label="音声フォーマット"></select>
+    </div>
+    <div class="picker-row">
+      <div class="picker-label">切り出し範囲（任意）</div>
+      <div class="trim-inputs">
+        <input class="trim-input" id="trim-start-input" type="text" inputmode="numeric" placeholder="開始 0:05" aria-label="切り出し開始時刻">
+        <input class="trim-input" id="trim-end-input" type="text" inputmode="numeric" placeholder="終了 0:10" aria-label="切り出し終了時刻">
+      </div>
     </div>
     <div class="picker-actions">
       <button class="picker-btn" id="download-video-selected">映像DL</button>

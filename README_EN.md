@@ -10,6 +10,7 @@ The sample image is `docs/images/sc.png`.
 - Supports regular YouTube watch pages and Shorts URLs.
 - Lists muxed video+audio, video-only, and audio-only formats.
 - Provides separate selectors for resolution, FPS, extension, and audio format.
+- Supports optional time-range clipping such as `0:05` to `0:10`.
 - Muxes the selected video and audio in the browser with ffmpeg.wasm.
 - Attempts multiple YouTube Innertube clients to expose adaptive formats such as 720p and 1080p when available.
 - Resolves YouTube `n` and signature challenges in a sandboxed page.
@@ -96,6 +97,8 @@ node tools/update-ytdlp-vendor.mjs --sync-compat
 YouTube commonly serves 720p/1080p as video-only adaptive formats. Downloaded high-resolution files may not include audio.
 
 The extension can save video and audio separately. It can also mux the selected video and audio through ffmpeg.wasm in `sandbox/muxer.html`. It uses stream copy without re-encoding; compatible combinations are saved as `mp4`, and other combinations are saved as `mkv`.
+
+When a time range is entered, the extension downloads the selected input first and clips it through ffmpeg.wasm in `sandbox/muxer.html` with `-c copy`. This avoids re-encoding, but the exact start point may shift slightly depending on keyframe placement.
 
 Muxing runs in browser memory. Large inputs can fail because of memory limits, so choose a lower resolution or download video and audio separately if muxing fails.
 

@@ -36,6 +36,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     downloadAudio: document.getElementById('download-audio-selected'),
     downloadPair: document.getElementById('download-pair-selected'),
     downloadMux: document.getElementById('download-mux-selected'),
+    trimStart: document.getElementById('trim-start-input'),
+    trimEnd: document.getElementById('trim-end-input'),
     qualityNote
   };
 
@@ -1091,25 +1093,33 @@ function renderFormatPicker(formats, videoTitle, els) {
 
   els.downloadVideo.addEventListener('click', () => {
     const video = getSelectedFormat(els.videoSelect);
-    if (video) downloadFormat(video, videoTitle, video.isMuxed ? 'muxed' : 'video');
+    const trim = getTrimRangeFromInputs(els);
+    if (trim === false) return;
+    if (video) downloadFormat(video, videoTitle, video.isMuxed ? 'muxed' : 'video', trim);
   });
 
   els.downloadAudio.addEventListener('click', () => {
     const audio = getSelectedFormat(els.audioSelect);
-    if (audio) downloadFormat(audio, videoTitle, 'audio');
+    const trim = getTrimRangeFromInputs(els);
+    if (trim === false) return;
+    if (audio) downloadFormat(audio, videoTitle, 'audio', trim);
   });
 
   els.downloadPair.addEventListener('click', () => {
     const video = getSelectedFormat(els.videoSelect);
     const audio = getSelectedFormat(els.audioSelect);
-    if (video) downloadFormat(video, videoTitle, video.isMuxed ? 'muxed' : 'video');
-    if (audio && !video?.isMuxed) downloadFormat(audio, videoTitle, 'audio');
+    const trim = getTrimRangeFromInputs(els);
+    if (trim === false) return;
+    if (video) downloadFormat(video, videoTitle, video.isMuxed ? 'muxed' : 'video', trim);
+    if (audio && !video?.isMuxed) downloadFormat(audio, videoTitle, 'audio', trim);
   });
 
   els.downloadMux.addEventListener('click', () => {
     const video = getSelectedFormat(els.videoSelect);
     const audio = getSelectedFormat(els.audioSelect);
-    muxAndDownload(video, audio, videoTitle, els);
+    const trim = getTrimRangeFromInputs(els);
+    if (trim === false) return;
+    muxAndDownload(video, audio, videoTitle, els, trim);
   });
 
   els.qualityPicker.style.display = 'grid';
@@ -1144,6 +1154,63 @@ function matchesFilter(selected, value) {
 
 function getSelectedFormat(select) {
   return select.selectedOptions[0]?._format ?? null;
+}
+
+function getTrimRangeFromInputs(els) {
+  const startRaw = els.trimStart?.value?.trim() || '';
+  const endRaw = els.trimEnd?.value?.trim() || '';
+  if (!startRaw && !endRaw) return null;
+
+  const start = startRaw ? parseTimeInput(startRaw) : 0;
+  const end = endRaw ? parseTimeInput(endRaw) : null;
+  if (start == null || (end == null && endRaw)) {
+    alert('切り出し範囲は 0:05 または 1:02:03 の形式で入力してください');
+    return false;
+  }
+  if (end != null && end <= start) {
+    alert('切り出し終了時刻は開始時刻より後にしてください');
+    return false;
+  }
+  return {
+    start,
+    end,
+    startText: formatSecondsForFfmpeg(start),
+    endText: end == null ? null : formatSecondsForFfmpeg(end)
+  };
+}
+
+function parseTimeInput(value) {
+  if (!value) return null;
+  if (/^\d+(?:\.\d+)?$/.test(value)) return Number(value);
+  const parts = value.split(':');
+  if (parts.length < 2 || parts.length > 3) return null;
+  let seconds = 0;
+  for (const part of parts) {
+    if (!/^\d+(?:\.\d+)?$/.test(part)) return null;
+    seconds = seconds * 60 + Number(part);
+  }
+  return seconds;
+}
+
+function formatSecondsForFfmpeg(value) {
+  const hours = Math.floor(value / 3600);
+  const minutes = Math.floor((value % 3600) / 60);
+  const seconds = value - hours * 3600 - minutes * 60;
+  const secText = seconds % 1 === 0
+    ? String(seconds).padStart(2, '0')
+    : seconds.toFixed(3).replace(/0+$/, '').replace(/\.$/, '').padStart(2, '0');
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${secText}`;
+}
+
+function trimSuffix(trim) {
+  if (!trim) return '';
+  const start = formatSecondsForFilename(trim.start);
+  const end = trim.end == null ? 'end' : formatSecondsForFilename(trim.end);
+  return `_clip_${start}-${end}`;
+}
+
+function formatSecondsForFilename(value) {
+  return formatSecondsForFfmpeg(value).replace(/:/g, '-').replace(/\./g, '_');
 }
 
 function formatVideoOption(fmt) {
@@ -1206,12 +1273,12 @@ function formatAudioOption(fmt) {
   return [track, label, buildMeta(fmt)].filter(Boolean).join(' / ');
 }
 
-async function downloadFormat(fmt, videoTitle, kind) {
+async function downloadFormat(fmt, videoTitle, kind, trim = null) {
   try {
-    const filename = buildFilename(videoTitle, fmt, kind);
+    const filename = buildFilename(videoTitle, fmt, kind, trim);
 
     // progressive/muxed (itag18 等) は素のGETに応答するので直DLでOK
-    if (fmt.isMuxed) {
+    if (fmt.isMuxed && !trim) {
       chrome.downloads.download({ url: fmt.url, filename, saveAs: false }, () => {
         if (chrome.runtime.lastError) {
           console.warn('[ytdl] Download failed:', chrome.runtime.lastError.message, fmt);
@@ -1224,9 +1291,12 @@ async function downloadFormat(fmt, videoTitle, kind) {
     const label = kind === 'audio' ? '音声' : '映像';
     setMuxProgress(`${label}をダウンロード中...（ウィンドウを閉じないでください）`);
     const bytes = await fetchFormatBytes(fmt, p => setMuxProgress(`${label}DL中... ${p}%（閉じないで）`));
+    const outputBytes = trim
+      ? await trimSingleStream(bytes, fmt, trim)
+      : bytes;
     clearMuxProgress();
 
-    const blob = new Blob([bytes], { type: fmt.mimeType || 'application/octet-stream' });
+    const blob = new Blob([outputBytes], { type: fmt.mimeType || 'application/octet-stream' });
     const blobUrl = URL.createObjectURL(blob);
     chrome.downloads.download({ url: blobUrl, filename, saveAs: false }, () => {
       setTimeout(() => URL.revokeObjectURL(blobUrl), 120000);
@@ -1526,7 +1596,7 @@ function muxerHandshake() {
   });
 }
 
-async function muxStreams(videoBytes, audioBytes, names) {
+async function muxStreams(videoBytes, audioBytes, names, trim = null) {
   const { coreReady, iframe } = await muxerHandshake();
   const wasmBinary = coreReady ? null : await getWasmBinary();
   const reqId = 'mux_' + Date.now();
@@ -1563,8 +1633,54 @@ async function muxStreams(videoBytes, audioBytes, names) {
       audioName: names.audio,
       outName: names.out
     };
+    if (trim) msg.trim = { start: trim.startText, end: trim.endText };
     if (wasmBinary) msg.wasmBinary = wasmBinary; // 転送せずコピー（キャッシュ維持）
     iframe.contentWindow.postMessage(msg, '*', [videoBytes.buffer, audioBytes.buffer]);
+  });
+}
+
+async function trimSingleStream(bytes, fmt, trim) {
+  const { coreReady, iframe } = await muxerHandshake();
+  const wasmBinary = coreReady ? null : await getWasmBinary();
+  const reqId = 'trim_' + Date.now();
+  const inputName = `${reqId}_input.${fmt.ext || 'mp4'}`;
+  const fsOutName = `${reqId}_out.${fmt.ext || 'mp4'}`;
+
+  setMuxProgress('切り出し中...（ウィンドウを閉じないでください）');
+
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      window.removeEventListener('message', onMsg);
+      reject(new Error('切り出しタイムアウト（5分）'));
+    }, 300000);
+
+    function onMsg(e) {
+      const d = e.data;
+      if (!d || d.reqId !== reqId) return;
+      if (d.action === 'muxProgress') {
+        const m = /time=(\S+)/.exec(d.line || '');
+        if (m) setMuxProgress(`切り出し中... ${m[1]}`);
+        return;
+      }
+      if (d.action === 'muxResult') {
+        clearTimeout(timeout);
+        window.removeEventListener('message', onMsg);
+        if (d.success) resolve(new Uint8Array(d.data));
+        else reject(new Error(d.error));
+      }
+    }
+    window.addEventListener('message', onMsg);
+
+    const msg = {
+      action: 'trim',
+      reqId,
+      input: bytes.buffer,
+      inputName,
+      outName: fsOutName,
+      trim: { start: trim.startText, end: trim.endText }
+    };
+    if (wasmBinary) msg.wasmBinary = wasmBinary;
+    iframe.contentWindow.postMessage(msg, '*', [bytes.buffer]);
   });
 }
 
@@ -1580,7 +1696,7 @@ function chooseMuxContainer(video, audio) {
   return { ext: 'mkv', video: `video.${v}`, audio: `audio.${a}`, out: 'out.mkv', mime: 'video/x-matroska' };
 }
 
-async function muxAndDownload(video, audio, videoTitle, els) {
+async function muxAndDownload(video, audio, videoTitle, els, trim = null) {
   if (!video || !audio) { alert('映像と音声の両方を選択してください'); return; }
   if (video.isMuxed) { alert('選択中の映像は既に音声込みです。合成は不要です。'); return; }
 
@@ -1608,13 +1724,13 @@ async function muxAndDownload(video, audio, videoTitle, els) {
 
     const cont = chooseMuxContainer(video, audio);
     setMuxProgress('合成中...（ウィンドウを閉じないでください）');
-    const out = await muxStreams(vb, ab, cont);
+    const out = await muxStreams(vb, ab, cont, trim);
     vb = ab = null; // 転送済みだが参照を明示的に解放
 
     setMuxProgress('保存中...');
     const blob = new Blob([out], { type: cont.mime });
     const blobUrl = URL.createObjectURL(blob);
-    const filename = `${sanitize(videoTitle)}_${sanitize(video.quality)}_muxed.${cont.ext}`;
+    const filename = `${sanitize(videoTitle)}_${sanitize(video.quality)}_muxed${trimSuffix(trim)}.${cont.ext}`;
     chrome.downloads.download({ url: blobUrl, filename, saveAs: false }, () => {
       setTimeout(() => URL.revokeObjectURL(blobUrl), 120000);
       if (chrome.runtime.lastError) {
@@ -1721,7 +1837,12 @@ function buildItem(fmt, videoTitle) {
   });
 
   li.querySelector('.dl-btn').addEventListener('click', async () => {
-    await downloadFormat(fmt, videoTitle, fmt.isMuxed ? 'muxed' : fmt.hasVideo ? 'video' : 'audio');
+    const trim = getTrimRangeFromInputs({
+      trimStart: document.getElementById('trim-start-input'),
+      trimEnd: document.getElementById('trim-end-input')
+    });
+    if (trim === false) return;
+    await downloadFormat(fmt, videoTitle, fmt.isMuxed ? 'muxed' : fmt.hasVideo ? 'video' : 'audio', trim);
   });
 
   return li;
@@ -1742,7 +1863,7 @@ function formatQualityLabel(fmt) {
   return `itag-${fmt.itag}`;
 }
 
-function buildFilename(videoTitle, fmt, kind = null) {
+function buildFilename(videoTitle, fmt, kind = null, trim = null) {
   const parts = [sanitize(videoTitle)];
   if (kind) parts.push(kind);
   parts.push(sanitize(fmt.quality));
@@ -1750,7 +1871,7 @@ function buildFilename(videoTitle, fmt, kind = null) {
   if (!fmt.hasVideo && fmt.hasAudio && fmt.language) {
     parts.push(fmt.language + (fmt.isOriginalAudio ? '-orig' : fmt.isDubbed ? '-dub' : ''));
   }
-  return `${parts.filter(Boolean).join('_')}.${fmt.ext}`;
+  return `${parts.filter(Boolean).join('_')}${trimSuffix(trim)}.${fmt.ext}`;
 }
 
 function compareFormats(a, b) {

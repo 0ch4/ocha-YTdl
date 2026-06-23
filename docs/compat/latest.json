@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "generatedAt": "2026-06-21T06:01:53.226Z",
-  "latestExtensionVersion": "0.8.0",
+  "latestExtensionVersion": "0.8.1",
   "minimumRecommended": {
     "ytDlpRelease": "2026.06.09",
     "ejsVersion": "0.8.0"
