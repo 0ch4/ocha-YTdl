@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ocha-YTdl",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "description": "Download YouTube videos — pure JS, no external tools",
   "permissions": [
     "activeTab",
@@ -25,6 +25,6 @@
     "service_worker": "src/background.js"
   },
   "sandbox": {
-    "pages": ["sandbox/solver.html", "sandbox/muxer.html", "sandbox/potgen.html"]
+    "pages": ["sandbox/solver.html", "sandbox/muxer.html"]
   }
 }

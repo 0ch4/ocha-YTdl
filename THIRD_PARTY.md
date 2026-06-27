@@ -29,9 +29,9 @@ https://github.com/ffmpegwasm/ffmpeg.wasm and https://ffmpeg.org
 
 File: `vendor/bgutils/bgutils.js`
 
-Bundled browser build of `bgutils-js@3.2.0`, used for BotGuard / PO Token generation in
-`sandbox/potgen.html` and page-context token generation fallback. Check the upstream project
-for license and source:
+Bundled browser build of `bgutils-js@3.2.0`, used for BotGuard / PO Token generation.
+It is injected into the YouTube page's MAIN world (via `chrome.scripting.executeScript`)
+and run there to mint a WebPO token. Check the upstream project for license and source:
 https://github.com/LuanRT/BgUtils
 
 ## yt.solver.core.js

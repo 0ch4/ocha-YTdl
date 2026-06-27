@@ -7,6 +7,11 @@ const MAINTENANCE_STATUS_CACHE_MS = 24 * 60 * 60 * 1000;
 const UPDATE_GUIDE_URL = 'https://github.com/0ch4/ocha-YTdl/blob/main/docs/UPDATE_JA.md';
 
 document.addEventListener('DOMContentLoaded', async () => {
+  // ?job=ID で開かれた場合は「ダウンロード専用ウィンドウ」として動作し、
+  // 通常のUI抽出フローはスキップ（popupを閉じてもDL/合成が継続するようにするため）。
+  const jobId = new URLSearchParams(location.search).get('job');
+  if (jobId) { await runDownloadWorker(jobId); return; }
+
   const statusEl = document.getElementById('status');
   const errorEl  = document.getElementById('error');
   const titleEl  = document.getElementById('video-title');
@@ -54,7 +59,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   checkMaintenanceStatus(maintenanceEl, maintenanceActionsEl, maintenancePillEl).catch(e => {
-    setMaintenancePill(maintenancePillEl, 'unknown', 'status: 確認不可', '互換性ステータスを確認できませんでした');
+    setMaintenancePill(maintenancePillEl, 'unknown', '確認不可', '互換性ステータスを確認できませんでした');
     console.info('[ytdl] Maintenance status check skipped:', e?.message || e);
   });
 
@@ -125,11 +130,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         else if (jsUrl && jsUrl.startsWith('/')) jsUrl = 'https://www.youtube.com' + jsUrl;
 
         return {
+          docTitle: document.title || null, // ytInitialPlayerResponse 未設定時のタイトル確実なフォールバック
           playerResponse: pr ? {
             videoDetails: pr.videoDetails ? {
               title: pr.videoDetails.title,
               lengthSeconds: pr.videoDetails.lengthSeconds || null,
               isLiveContent: Boolean(pr.videoDetails.isLiveContent),
+              isLive: Boolean(pr.videoDetails.isLive),
               thumbnail: pr.videoDetails.thumbnail || null
             } : null,
             streamingData: pr.streamingData
@@ -152,8 +159,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     return;
   }
 
+  // tv-only では player.js URL さえ取れれば watchページHTMLの取得(重い)は不要。
+  // ページから player.js URL を取れなかった時だけ HTML を補完取得する。
   try {
-    if (!pageGlobals?.innertube?.apiKey || !pageGlobals?.playerResponse?.streamingData) {
+    if (!pageGlobals?.playerJsUrl) {
       statusEl.textContent = '動画ページ情報を補完中...';
       pageGlobals = mergePageGlobals(pageGlobals, await fetchWatchPageGlobals(videoId));
     }
@@ -165,6 +174,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   _videoId = videoId;
   // PO Token は事前生成しない（tv経路は signatureTimestamp + Cookie で pot不要）。
   // 実際に 20MB超のDLで 403 になった時だけ遅延生成する（fetchRange 内）。
+
+  const playerJsUrl = pageGlobals?.playerJsUrl;
+  // player.js は tv リクエストと並行取得（どちらもネットワーク待ち＝重ね合わせで短縮）。
+  const playerJsPromise = playerJsUrl
+    ? getCachedPlayerJs(playerJsUrl).catch(e => { console.warn('[ytdl] player.js fetch failed:', e); return null; })
+    : Promise.resolve(null);
 
   let apiPlayerResponse = [];
   let playerFetchDebug = null;
@@ -179,15 +194,22 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   const playerResponse = pickBestPlayerResponse([...apiPlayerResponse, markPlayerResponseSource(pageGlobals?.playerResponse, 'page')]);
-  const playerJsUrl = pageGlobals?.playerJsUrl;
 
   if (!playerResponse?.streamingData) {
     showError('動画情報が見つかりません。ページを再読み込みしてください。');
     return;
   }
 
-  const title = playerResponse.videoDetails?.title ?? 'video';
-  const videoInfo = buildVideoInfo(playerResponse, videoId, isShorts);
+  // タイトル/サムネ/再生時間は、ページの ytInitialPlayerResponse.videoDetails が最も充実
+  // （tv応答は title を持たないことがある）。ページ情報を優先し、無ければAPI応答で補完。
+  // どちらも無い場合（ytInitialPlayerResponse 未設定時など）は document.title から復元。
+  const videoDetails = {
+    ...(playerResponse.videoDetails || {}),
+    ...(pageGlobals?.playerResponse?.videoDetails || {})
+  };
+  const title = videoDetails.title || cleanYouTubeDocTitle(pageGlobals?.docTitle) || 'video';
+  videoDetails.title = title;
+  const videoInfo = buildVideoInfo({ videoDetails }, videoId, isShorts);
   const { formats: rawFmts, adaptiveFormats: rawAdapt } = playerResponse.streamingData;
   const allFmtsRaw = dedupeRawFormats([...(rawFmts ?? []), ...(rawAdapt ?? [])]);
 
@@ -229,31 +251,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else {
       try {
         statusEl.textContent = '復号ロジックを読み込み中...';
-        
-        let playerJs = null;
-        try {
-          const cached = await chrome.storage.local.get(['playerJsUrl', 'playerJs']);
-          if (cached.playerJsUrl === playerJsUrl && cached.playerJs) {
-            playerJs = cached.playerJs;
-            console.log('[ytdl] Loaded player.js from cache');
-          }
-        } catch (e) {
-          console.warn('[ytdl] Cache read failed:', e);
-        }
-        
-        if (!playerJs) {
-          statusEl.textContent = '復号ロジックをダウンロード中...';
-          const playerResp = await fetch(playerJsUrl);
-          if (!playerResp.ok) throw new Error(`fetch failed: ${playerResp.status}`);
-          playerJs = await playerResp.text();
-          
-          try {
-            await chrome.storage.local.set({ playerJsUrl, playerJs });
-            console.log('[ytdl] Saved player.js to cache');
-          } catch (e) {
-            console.warn('[ytdl] Cache write failed:', e);
-          }
-        }
+
+        // tv リクエストと並行で取得済み（または取得中）の player.js を待つ
+        const playerJs = await playerJsPromise;
+        if (!playerJs) throw new Error('player.js を取得できませんでした');
 
         statusEl.textContent = 'シグネチャを復号中...';
         
@@ -369,9 +370,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
   }
 
-  nSigEl.textContent = nSigOk ? '✓ シグネチャ: 復号OK' : `✗ シグネチャ: 失敗 — ${nSigError ?? ''}`;
-  nSigEl.className   = nSigOk ? 'nsig-ok' : 'nsig-fail';
-  nSigEl.style.display = 'block';
+  // 成功時はノイズになるので表示しない。失敗時のみ警告を出す。
+  if (nSigOk) {
+    nSigEl.style.display = 'none';
+  } else {
+    nSigEl.textContent = `✗ シグネチャ: 失敗 — ${nSigError ?? ''}`;
+    nSigEl.className = 'nsig-fail';
+    nSigEl.style.display = 'block';
+  }
 
   // PO Token の捕獲状況（無いと20MB超のDLが失敗する）
   // PO Token は遅延生成（必要時のみ）なので起動時は表示しない。
@@ -463,6 +469,7 @@ async function fetchWatchPageGlobals(videoId) {
         title: pr.videoDetails.title,
         lengthSeconds: pr.videoDetails.lengthSeconds || null,
         isLiveContent: Boolean(pr.videoDetails.isLiveContent),
+        isLive: Boolean(pr.videoDetails.isLive),
         thumbnail: pr.videoDetails.thumbnail || null
       } : null,
       streamingData: pr.streamingData
@@ -493,10 +500,19 @@ function mergePageGlobals(primary = {}, fallback = {}) {
   };
 }
 
+// "(3) 動画タイトル - YouTube" → "動画タイトル"。videoDetails が無い時のタイトル復元用。
+function cleanYouTubeDocTitle(docTitle) {
+  if (!docTitle) return null;
+  let t = String(docTitle).replace(/^\(\d+\)\s*/, '');   // 未読通知数の接頭辞
+  t = t.replace(/\s*[-–—]\s*YouTube\s*$/i, '').trim();    // 末尾の " - YouTube"
+  return t && t.toLowerCase() !== 'youtube' ? t : null;
+}
+
 function buildVideoInfo(playerResponse, videoId, isShorts = false) {
   const details = playerResponse?.videoDetails || {};
   const thumbnailUrl = pickBestThumbnailUrl(details.thumbnail, videoId);
-  const durationLabel = formatDurationLabel(details.lengthSeconds, details.isLiveContent);
+  // 配信中(isLive)のみ「LIVE」。終了済みLIVE(アーカイブ)は lengthSeconds が入るので実時間を出す。
+  const durationLabel = formatDurationLabel(details.lengthSeconds, details.isLive);
   return {
     title: details.title || 'video',
     thumbnailUrl,
@@ -536,7 +552,7 @@ async function checkMaintenanceStatus(el, actionsEl, pillEl) {
   const latest = await getLatestMaintenanceStatus();
   const notice = buildMaintenanceNotice(bundled, latest);
   if (!notice) {
-    setMaintenancePill(pillEl, 'latest', 'status: 最新', '同梱ロジックは最新互換性メタと同期しています');
+    setMaintenancePill(pillEl, 'latest', '最新', '同梱ロジックは最新互換性メタと同期しています');
     return;
   }
 
@@ -610,7 +626,7 @@ function buildMaintenanceNotice(bundled, latest) {
     : severity === 'info' ? 'maint-info' : 'maint-warn';
   const title = severity === 'critical' ? '更新が必要です' : severity === 'info' ? 'お知らせ' : '更新を推奨します';
   const pillState = severity === 'critical' ? 'required' : severity === 'info' ? 'latest' : 'recommended';
-  const pillText = severity === 'critical' ? 'status: 要更新' : severity === 'info' ? 'status: 情報' : 'status: 更新推奨';
+  const pillText = severity === 'critical' ? '要更新' : severity === 'info' ? '情報' : '更新推奨';
   const syncedMessage = '現在の同梱ロジックは最新互換性メタと同期しています。';
   const message = latest.messageJa && latest.messageJa !== syncedMessage ? latest.messageJa : null;
 
@@ -721,6 +737,27 @@ function isPotFreeSource(source) {
   return POT_FREE_SOURCES.has(source);
 }
 
+// player.js を storage.local キャッシュ付きで取得（n/sig復号に使う 2.5MB 級）。
+async function getCachedPlayerJs(playerJsUrl) {
+  try {
+    const cached = await chrome.storage.local.get(['playerJsUrl', 'playerJs']);
+    if (cached.playerJsUrl === playerJsUrl && cached.playerJs) {
+      return cached.playerJs;
+    }
+  } catch (e) {
+    console.warn('[ytdl] player.js cache read failed:', e);
+  }
+  const resp = await fetch(playerJsUrl);
+  if (!resp.ok) throw new Error(`player.js fetch failed: ${resp.status}`);
+  const text = await resp.text();
+  try {
+    await chrome.storage.local.set({ playerJsUrl, playerJs: text });
+  } catch (e) {
+    console.warn('[ytdl] player.js cache write failed:', e);
+  }
+  return text;
+}
+
 async function fetchInnertubePlayerResponses(videoId, innertube = {}, statusEl = null, tabId = null, pot = null) {
   const clients = buildInnertubeClients(innertube);
   const responses = [];
@@ -732,13 +769,17 @@ async function fetchInnertubePlayerResponses(videoId, innertube = {}, statusEl =
       if (statusEl) statusEl.textContent = `動画フォーマットを確認中... (${client.key})`;
       const response = await fetchInnertubePlayerResponse(videoId, innertube, client, tabId, pot);
       responses.push(response);
+      const resolvable = countResolvableRawFormats(response);
       debug.clients.push({
         key: client.key,
         status: response.playabilityStatus || 'OK',
         formats: countRawFormats(response),
-        resolvable: countResolvableRawFormats(response),
+        resolvable,
         heights: getResolvableRawVideoHeights(response)
       });
+      // tv が解決可能フォーマットを返せば以降のクライアント(ios等は403で無駄)は叩かない＝高速化。
+      // tv が失敗した時だけ後続(tv_downgraded/page_web/...)にフォールバックする。
+      if (resolvable > 0) break;
     } catch (e) {
       errors.push(`${client.key}: ${e.message}`);
       debug.errors.push(`${client.key}: ${e.message}`);
@@ -830,6 +871,7 @@ async function fetchInnertubePlayerResponse(videoId, innertube = {}, clientConfi
       title: data.videoDetails.title,
       lengthSeconds: data.videoDetails.lengthSeconds || null,
       isLiveContent: Boolean(data.videoDetails.isLiveContent),
+      isLive: Boolean(data.videoDetails.isLive),
       thumbnail: data.videoDetails.thumbnail || null
     } : null,
     streamingData: data.streamingData
@@ -1096,14 +1138,14 @@ function renderFormatPicker(formats, videoTitle, els) {
     const video = getSelectedFormat(els.videoSelect);
     const trim = getTrimRangeFromInputs(els);
     if (trim === false) return;
-    if (video) downloadFormat(video, videoTitle, video.isMuxed ? 'muxed' : 'video', trim);
+    if (video) startDownload([{ kind: 'single', fmt: video, dlKind: video.isMuxed ? 'muxed' : 'video', trim }], videoTitle);
   });
 
   els.downloadAudio.addEventListener('click', () => {
     const audio = getSelectedFormat(els.audioSelect);
     const trim = getTrimRangeFromInputs(els);
     if (trim === false) return;
-    if (audio) downloadFormat(audio, videoTitle, 'audio', trim);
+    if (audio) startDownload([{ kind: 'single', fmt: audio, dlKind: 'audio', trim }], videoTitle);
   });
 
   els.downloadPair.addEventListener('click', () => {
@@ -1111,8 +1153,10 @@ function renderFormatPicker(formats, videoTitle, els) {
     const audio = getSelectedFormat(els.audioSelect);
     const trim = getTrimRangeFromInputs(els);
     if (trim === false) return;
-    if (video) downloadFormat(video, videoTitle, video.isMuxed ? 'muxed' : 'video', trim);
-    if (audio && !video?.isMuxed) downloadFormat(audio, videoTitle, 'audio', trim);
+    const items = [];
+    if (video) items.push({ kind: 'single', fmt: video, dlKind: video.isMuxed ? 'muxed' : 'video', trim });
+    if (audio && !video?.isMuxed) items.push({ kind: 'single', fmt: audio, dlKind: 'audio', trim });
+    if (items.length) startDownload(items, videoTitle);
   });
 
   els.downloadMux.addEventListener('click', () => {
@@ -1120,7 +1164,9 @@ function renderFormatPicker(formats, videoTitle, els) {
     const audio = getSelectedFormat(els.audioSelect);
     const trim = getTrimRangeFromInputs(els);
     if (trim === false) return;
-    muxAndDownload(video, audio, videoTitle, els, trim);
+    if (!video || !audio) { alert('映像と音声の両方を選択してください'); return; }
+    if (video.isMuxed) { alert('選択中の映像は既に音声込みです。合成は不要です。'); return; }
+    startDownload([{ kind: 'mux', video, audio, trim }], videoTitle);
   });
 
   els.qualityPicker.style.display = 'grid';
@@ -1292,6 +1338,141 @@ function formatAudioOption(fmt) {
   return [track, label, buildMeta(fmt)].filter(Boolean).join(' / ');
 }
 
+// ─── ダウンロードのウィンドウ委譲（popup を閉じても継続させる）────────────────────
+// MV3 のツールバー popup はフォーカスを失うと閉じ、実行中のJS(チャンクDL/合成)が中断する。
+// そこで「直DL以外」は独立ウィンドウ(popup.html?job=ID, type:'popup')に処理を移す。
+// 直DL(chrome.downloads で素のURL)はブラウザのDLマネージャが継続するのでその場で実行。
+
+function isDirectItem(item) {
+  return item.kind === 'single' && item.fmt.isMuxed && !item.trim;
+}
+
+function startDownload(items, videoTitle) {
+  if (items.every(isDirectItem)) {
+    // 全て直DL（ブラウザが継続管理）→ ウィンドウ不要、その場で実行
+    for (const it of items) downloadFormat(it.fmt, videoTitle, it.dlKind, it.trim);
+    return;
+  }
+  dispatchDownloadJob({ items, videoTitle });
+}
+
+async function dispatchDownloadJob(job) {
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  job.ctx = { tabId: _tabId, videoId: _videoId, visitorData: _visitorData };
+  try {
+    await chrome.storage.session.set({ ['ochaJob:' + id]: job });
+    await chrome.windows.create({
+      url: chrome.runtime.getURL('src/popup.html') + '?job=' + id,
+      type: 'popup',
+      width: 480,
+      height: 280,
+      focused: true
+    });
+  } catch (e) {
+    // ウィンドウを開けない環境ではその場で実行（旧挙動: popupを閉じると中断）
+    console.warn('[ytdl] download window dispatch failed, running inline:', e);
+    runJobItems(job.items, job.videoTitle).catch(err => {
+      console.warn('[ytdl] inline job failed:', err);
+      alert(`ダウンロードに失敗しました: ${err && err.message || err}`);
+    });
+  }
+}
+
+async function runJobItems(items, videoTitle) {
+  let lastError = null;
+  for (const it of items) {
+    try {
+      if (it.kind === 'mux') {
+        await muxAndDownload(it.video, it.audio, videoTitle, {}, it.trim);
+      } else {
+        await downloadFormat(it.fmt, videoTitle, it.dlKind, it.trim);
+      }
+    } catch (e) {
+      lastError = e; // 各関数内で既に通知済み。残りのitemは続行する
+    }
+  }
+  if (lastError) throw lastError;
+}
+
+// ダウンロード専用ウィンドウ(?job=ID)の本体
+async function runDownloadWorker(jobId) {
+  const key = 'ochaJob:' + jobId;
+  const statusEl = document.getElementById('status');
+  document.querySelector('.hero')?.style.setProperty('display', 'none');
+  const hide = id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; };
+  ['maintenance-pill', 'nsig-status', 'pot-status', 'maintenance-status', 'maintenance-actions', 'quality-picker', 'format-debug', 'quality-note'].forEach(hide);
+
+  let job = null;
+  try {
+    const stored = await chrome.storage.session.get(key);
+    job = stored[key];
+    chrome.storage.session.remove(key);
+  } catch (_) {}
+
+  if (!job || !Array.isArray(job.items)) {
+    if (statusEl) statusEl.textContent = 'ダウンロードジョブが見つかりませんでした';
+    return;
+  }
+
+  _tabId = job.ctx?.tabId ?? null;
+  _videoId = job.ctx?.videoId ?? null;
+  _visitorData = job.ctx?.visitorData ?? null;
+
+  if (statusEl) statusEl.textContent = `⬇ ${job.videoTitle || 'ダウンロード'}`;
+  document.title = (job.videoTitle || 'download').slice(0, 60);
+
+  try {
+    await runJobItems(job.items, job.videoTitle);
+    setMuxProgress('✓ 完了。まもなく閉じます');
+    setTimeout(() => window.close(), 2500);
+  } catch (e) {
+    clearMuxProgress();
+    if (statusEl) statusEl.textContent = '失敗: ' + (e && e.message || e) + '（このウィンドウは自動で閉じます）';
+    // 失敗時もウィンドウを放置しない（理由を読めるよう長めの猶予）。手動でも閉じられる。
+    setTimeout(() => window.close(), 12000);
+  }
+}
+
+// blob を保存し、DL完了まで待つ（成功で resolve、失敗は理由付きで reject）。
+// ワーカーウィンドウは完了まで開いたまま＝blob URL が有効なうちに確実に書き込まれる。
+function saveBlob(blob, filename) {
+  return new Promise((resolve, reject) => {
+    const blobUrl = URL.createObjectURL(blob);
+    let settled = false;
+    let downloadId = null;
+
+    const done = (ok, reason) => {
+      if (settled) return;
+      settled = true;
+      chrome.downloads.onChanged.removeListener(onChanged);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 8000);
+      if (ok) resolve(true);
+      else reject(new Error(reason || '保存に失敗しました'));
+    };
+
+    function onChanged(delta) {
+      if (delta.id !== downloadId || !delta.state) return;
+      if (delta.state.current === 'complete') done(true);
+      else if (delta.state.current === 'interrupted') done(false, '保存中断: ' + (delta.error?.current || '不明'));
+    }
+
+    chrome.downloads.download({ url: blobUrl, filename, saveAs: false }, (id) => {
+      if (chrome.runtime.lastError || id == null) {
+        done(false, chrome.runtime.lastError?.message || 'downloads API エラー');
+        return;
+      }
+      downloadId = id;
+      chrome.downloads.onChanged.addListener(onChanged);
+      // レース対策: onChanged 登録前に完了/中断していた場合を拾う
+      chrome.downloads.search({ id }, (items) => {
+        const it = items && items[0];
+        if (it?.state === 'complete') done(true);
+        else if (it?.state === 'interrupted') done(false, '保存中断: ' + (it.error || '不明'));
+      });
+    });
+  });
+}
+
 async function downloadFormat(fmt, videoTitle, kind, trim = null) {
   try {
     const filename = buildFilename(videoTitle, fmt, kind, trim);
@@ -1313,20 +1494,15 @@ async function downloadFormat(fmt, videoTitle, kind, trim = null) {
     const outputBytes = trim
       ? await trimSingleStream(bytes, fmt, trim)
       : bytes;
-    clearMuxProgress();
+    setMuxProgress('保存中...');
 
     const blob = new Blob([outputBytes], { type: fmt.mimeType || 'application/octet-stream' });
-    const blobUrl = URL.createObjectURL(blob);
-    chrome.downloads.download({ url: blobUrl, filename, saveAs: false }, () => {
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 120000);
-      if (chrome.runtime.lastError) {
-        console.warn('[ytdl] Blob download failed:', chrome.runtime.lastError.message, fmt);
-      }
-    });
+    await saveBlob(blob, filename);
+    clearMuxProgress();
   } catch (e) {
     clearMuxProgress();
     console.warn('[ytdl] Download failed:', e, fmt);
-    alert(`ダウンロードに失敗しました: ${e.message || e}`);
+    throw e; // 失敗はワーカーウィンドウのステータスに表示される
   }
 }
 
@@ -1615,15 +1791,17 @@ function muxerHandshake() {
   });
 }
 
-async function muxStreams(videoBytes, audioBytes, names, trim = null) {
+// muxer サンドボックス(ffmpeg.wasm)へのタスク送信を共通化。
+// buildMessage(reqId) が postMessage 本体を返す。transfer は転送する ArrayBuffer 群。
+async function runMuxerTask(buildMessage, transfer, progressLabel) {
   const { coreReady, iframe } = await muxerHandshake();
   const wasmBinary = coreReady ? null : await getWasmBinary();
-  const reqId = 'mux_' + Date.now();
+  const reqId = 'mtask_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
 
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       window.removeEventListener('message', onMsg);
-      reject(new Error('合成タイムアウト（5分）'));
+      reject(new Error(`${progressLabel}タイムアウト（5分）`));
     }, 300000);
 
     function onMsg(e) {
@@ -1631,7 +1809,7 @@ async function muxStreams(videoBytes, audioBytes, names, trim = null) {
       if (!d || d.reqId !== reqId) return;
       if (d.action === 'muxProgress') {
         const m = /time=(\S+)/.exec(d.line || '');
-        if (m) setMuxProgress(`合成中... ${m[1]}`);
+        if (m) setMuxProgress(`${progressLabel}... ${m[1]}`);
         return;
       }
       if (d.action === 'muxResult') {
@@ -1643,6 +1821,14 @@ async function muxStreams(videoBytes, audioBytes, names, trim = null) {
     }
     window.addEventListener('message', onMsg);
 
+    const msg = buildMessage(reqId);
+    if (wasmBinary) msg.wasmBinary = wasmBinary; // 転送せずコピー（キャッシュ維持）
+    iframe.contentWindow.postMessage(msg, '*', transfer);
+  });
+}
+
+async function muxStreams(videoBytes, audioBytes, names, trim = null) {
+  return runMuxerTask((reqId) => {
     const msg = {
       action: 'mux',
       reqId,
@@ -1653,54 +1839,22 @@ async function muxStreams(videoBytes, audioBytes, names, trim = null) {
       outName: names.out
     };
     if (trim) msg.trim = { start: trim.startText, end: trim.endText, duration: trim.durationText };
-    if (wasmBinary) msg.wasmBinary = wasmBinary; // 転送せずコピー（キャッシュ維持）
-    iframe.contentWindow.postMessage(msg, '*', [videoBytes.buffer, audioBytes.buffer]);
-  });
+    return msg;
+  }, [videoBytes.buffer, audioBytes.buffer], '合成中');
 }
 
 async function trimSingleStream(bytes, fmt, trim) {
-  const { coreReady, iframe } = await muxerHandshake();
-  const wasmBinary = coreReady ? null : await getWasmBinary();
-  const reqId = 'trim_' + Date.now();
-  const inputName = `${reqId}_input.${fmt.ext || 'mp4'}`;
-  const fsOutName = `${reqId}_out.${fmt.ext || 'mp4'}`;
-
+  const inputName = `input.${fmt.ext || 'mp4'}`;
+  const fsOutName = `out.${fmt.ext || 'mp4'}`;
   setMuxProgress('切り出し中...（ウィンドウを閉じないでください）');
-
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      window.removeEventListener('message', onMsg);
-      reject(new Error('切り出しタイムアウト（5分）'));
-    }, 300000);
-
-    function onMsg(e) {
-      const d = e.data;
-      if (!d || d.reqId !== reqId) return;
-      if (d.action === 'muxProgress') {
-        const m = /time=(\S+)/.exec(d.line || '');
-        if (m) setMuxProgress(`切り出し中... ${m[1]}`);
-        return;
-      }
-      if (d.action === 'muxResult') {
-        clearTimeout(timeout);
-        window.removeEventListener('message', onMsg);
-        if (d.success) resolve(new Uint8Array(d.data));
-        else reject(new Error(d.error));
-      }
-    }
-    window.addEventListener('message', onMsg);
-
-    const msg = {
-      action: 'trim',
-      reqId,
-      input: bytes.buffer,
-      inputName,
-      outName: fsOutName,
-      trim: { start: trim.startText, end: trim.endText, duration: trim.durationText }
-    };
-    if (wasmBinary) msg.wasmBinary = wasmBinary;
-    iframe.contentWindow.postMessage(msg, '*', [bytes.buffer]);
-  });
+  return runMuxerTask((reqId) => ({
+    action: 'trim',
+    reqId,
+    input: bytes.buffer,
+    inputName,
+    outName: fsOutName,
+    trim: { start: trim.startText, end: trim.endText, duration: trim.durationText }
+  }), [bytes.buffer], '切り出し中');
 }
 
 function chooseMuxContainer(video, audio) {
@@ -1748,14 +1902,8 @@ async function muxAndDownload(video, audio, videoTitle, els, trim = null) {
 
     setMuxProgress('保存中...');
     const blob = new Blob([out], { type: cont.mime });
-    const blobUrl = URL.createObjectURL(blob);
     const filename = `${sanitize(videoTitle)}_${sanitize(video.quality)}_muxed${trimSuffix(trim)}.${cont.ext}`;
-    chrome.downloads.download({ url: blobUrl, filename, saveAs: false }, () => {
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 120000);
-      if (chrome.runtime.lastError) {
-        console.warn('[ytdl] Muxed download failed:', chrome.runtime.lastError.message);
-      }
-    });
+    await saveBlob(blob, filename);
     setMuxProgress('✓ 合成完了');
     setTimeout(clearMuxProgress, 4000);
   } catch (e) {
@@ -1763,10 +1911,9 @@ async function muxAndDownload(video, audio, videoTitle, els, trim = null) {
     console.warn('[ytdl] Mux failed:', e);
     const msg = String(e && e.message || e);
     if (/allocation failed|out of memory|memory/i.test(msg)) {
-      alert('メモリ不足で合成できませんでした。より低い解像度を選ぶか、映像/音声を個別にDLしてください。');
-    } else {
-      alert(`合成に失敗しました: ${msg}`);
+      throw new Error('メモリ不足で合成できませんでした。低い解像度を選ぶか個別にDLしてください');
     }
+    throw e;
   } finally {
     buttons.forEach(b => { if (b) b.disabled = false; });
   }
@@ -1820,7 +1967,9 @@ function renderFormatDebug(el, debug, formats, resolveStats = null) {
   if (lines.length === 0) return;
 
   el.textContent = lines.join('\n');
-  el.style.display = 'block'; // 常に表示（クライアント別の状態を確認できるように）
+  // 問題がある時だけ表示（正常時はノイズになるので隠す）。
+  const hasIssue = errors.length > 0 || resolveStats?.unresolvedSig || highestVideoHeight(formats) <= 360;
+  el.style.display = hasIssue ? 'block' : 'none';
 }
 
 function groupFormatsBySource(formats) {
@@ -1855,14 +2004,15 @@ function buildItem(fmt, videoTitle) {
     setTimeout(() => { btn.textContent = 'コピー'; }, 1500);
   });
 
-  li.querySelector('.dl-btn').addEventListener('click', async () => {
+  li.querySelector('.dl-btn').addEventListener('click', () => {
     const trim = getTrimRangeFromInputs({
       trimRange: document.getElementById('trim-range-input'),
       trimStart: document.getElementById('trim-start-input'),
       trimEnd: document.getElementById('trim-end-input')
     });
     if (trim === false) return;
-    await downloadFormat(fmt, videoTitle, fmt.isMuxed ? 'muxed' : fmt.hasVideo ? 'video' : 'audio', trim);
+    const kind = fmt.isMuxed ? 'muxed' : fmt.hasVideo ? 'video' : 'audio';
+    startDownload([{ kind: 'single', fmt, dlKind: kind, trim }], videoTitle);
   });
 
   return li;

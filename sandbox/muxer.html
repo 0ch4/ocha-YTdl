@@ -71,10 +71,13 @@
           if (rc !== 0) throw new Error('ffmpeg exited with code ' + rc + '\n' + logs.slice(-12).join('\n'));
 
           if (data.trim) {
-            var cutArgs = ['-i', muxOutName];
+            // 入力シーク(-ss を -i の前)で最寄りキーフレームへ。-c copy でも音声が
+            // 先頭から欠けないようにする。-avoid_negative_ts make_zero で先頭TSを0に正規化。
+            var cutArgs = [];
             if (data.trim.start) cutArgs.push('-ss', data.trim.start);
+            cutArgs.push('-i', muxOutName);
             if (data.trim.duration) cutArgs.push('-t', data.trim.duration);
-            cutArgs.push('-c', 'copy');
+            cutArgs.push('-c', 'copy', '-avoid_negative_ts', 'make_zero');
             if (/\.(?:mp4|m4a|mov)$/i.test(oName)) cutArgs.push('-movflags', '+faststart');
             cutArgs.push(oName);
             var cutRc = Module.exec.apply(Module, cutArgs);
@@ -114,10 +117,13 @@
           TrimModule.FS.writeFile(inName, new Uint8Array(data.input));
           data.input = null;
 
-          var trimArgs = ['-i', inName];
+          // 入力シーク(-ss を -i の前)＋ -avoid_negative_ts make_zero で
+          // -c copy でも先頭の音声が欠けないようにする。
+          var trimArgs = [];
           if (data.trim && data.trim.start) trimArgs.push('-ss', data.trim.start);
+          trimArgs.push('-i', inName);
           if (data.trim && data.trim.duration) trimArgs.push('-t', data.trim.duration);
-          trimArgs.push('-c', 'copy');
+          trimArgs.push('-c', 'copy', '-avoid_negative_ts', 'make_zero');
           if (/\.(?:mp4|m4a|mov)$/i.test(outName)) trimArgs.push('-movflags', '+faststart');
           trimArgs.push(outName);
           var trimRc = TrimModule.exec.apply(TrimModule, trimArgs);
