@@ -2,6 +2,7 @@ const YOUTUBE_CONFIG = globalThis.OCHA_YTDL_YOUTUBE_CONFIG || {};
 const DEFAULT_INNERTUBE_API_KEY = YOUTUBE_CONFIG.defaultInnertubeApiKey || 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
 const DEFAULT_WEB_CLIENT_VERSION = YOUTUBE_CONFIG.defaultWebClientVersion || '2.20260114.08.00';
 const RANGE_CHUNK_SIZE = YOUTUBE_CONFIG.rangeChunkSize || (10 << 20); // 10MB — matches yt-dlp's CHUNK_SIZE
+const MUX_SOFT_LIMIT = 1100 * 1024 * 1024; // ~1.1GB 超: ffmpeg.wasm(wasm32)がヒープ確保に失敗(OOM)しやすい目安
 const MAINTENANCE_STATUS_URL = 'https://raw.githubusercontent.com/0ch4/ocha-YTdl/main/docs/compat/latest.json';
 const MAINTENANCE_STATUS_CACHE_MS = 24 * 60 * 60 * 1000;
 const UPDATE_GUIDE_URL = 'https://github.com/0ch4/ocha-YTdl/blob/main/docs/UPDATE_JA.md';
@@ -1128,11 +1129,20 @@ function renderFormatPicker(formats, videoTitle, els) {
   fillFormatSelect(els.audioSelect, audioFormats, formatAudioOption);
   updateVideoOptions();
 
-  els.resolutionSelect.addEventListener('change', updateVideoOptions);
-  els.fpsSelect.addEventListener('change', updateVideoOptions);
-  els.extSelect.addEventListener('change', updateVideoOptions);
-  els.videoSelect.addEventListener('change', updatePickerState);
-  els.audioSelect.addEventListener('change', updatePickerState);
+  // 大容量muxの「2段階確認」状態。フォーマット/トリム選択を変えたらリセットする。
+  let muxArmed = false;
+  const resetMuxArm = () => {
+    if (!muxArmed) return;
+    muxArmed = false;
+    if (els.downloadMux) els.downloadMux.textContent = '映像+音声を合成して保存';
+    clearMuxProgress();
+  };
+
+  els.resolutionSelect.addEventListener('change', () => { resetMuxArm(); updateVideoOptions(); });
+  els.fpsSelect.addEventListener('change', () => { resetMuxArm(); updateVideoOptions(); });
+  els.extSelect.addEventListener('change', () => { resetMuxArm(); updateVideoOptions(); });
+  els.videoSelect.addEventListener('change', () => { resetMuxArm(); updatePickerState(); });
+  els.audioSelect.addEventListener('change', () => { resetMuxArm(); updatePickerState(); });
 
   els.downloadVideo.addEventListener('click', () => {
     const video = getSelectedFormat(els.videoSelect);
@@ -1164,8 +1174,26 @@ function renderFormatPicker(formats, videoTitle, els) {
     const audio = getSelectedFormat(els.audioSelect);
     const trim = getTrimRangeFromInputs(els);
     if (trim === false) return;
-    if (!video || !audio) { alert('映像と音声の両方を選択してください'); return; }
-    if (video.isMuxed) { alert('選択中の映像は既に音声込みです。合成は不要です。'); return; }
+    if (!video || !audio) { showPickerMessage('映像と音声の両方を選択してください', 'error'); return; }
+    if (video.isMuxed) { showPickerMessage('選択中の映像は既に音声込みです。合成は不要です。', 'error'); return; }
+
+    // 大容量はffmpeg.wasmがOOMしやすい。だが alert/confirm はpopupを閉じてDL自体を不能にするので、
+    // ブロッキングしないインライン2段階確認にする（1回目=警告表示, 2回目=実行）。
+    const estTotal = (video.contentLength || 0) + (audio.contentLength || 0);
+    if (estTotal > MUX_SOFT_LIMIT && !muxArmed) {
+      const mb = Math.round(estTotal / 1024 / 1024);
+      muxArmed = true;
+      els.downloadMux.textContent = `それでも合成して保存（約${mb}MB）`;
+      showPickerMessage(
+        `⚠ 合計約${mb}MB。ブラウザのメモリ上限で合成が失敗する可能性があります。\n` +
+        `映像/音声を個別にDLするか、低い解像度を推奨。もう一度押すと合成を試みます。`,
+        'warn'
+      );
+      return;
+    }
+    muxArmed = false;
+    els.downloadMux.textContent = '映像+音声を合成して保存';
+    clearMuxProgress();
     startDownload([{ kind: 'mux', video, audio, trim }], videoTitle);
   });
 
@@ -1207,7 +1235,7 @@ function getTrimRangeFromInputs(els) {
   const rangeRaw = els.trimRange?.value?.trim() || '';
   const rangeParts = rangeRaw ? parseTrimRangeText(rangeRaw) : null;
   if (rangeRaw && !rangeParts) {
-    alert('切り出し範囲は 5-10、0:05~0:10、1:02:03-1:03:00 の形式で入力してください');
+    showPickerMessage('切り出し範囲は 5-10、0:05~0:10、1:02:03-1:03:00 の形式で入力してください', 'error');
     return false;
   }
 
@@ -1218,11 +1246,11 @@ function getTrimRangeFromInputs(els) {
   const start = startRaw ? parseTimeInput(startRaw) : 0;
   const end = endRaw ? parseTimeInput(endRaw) : null;
   if (start == null || (end == null && endRaw)) {
-    alert('切り出し範囲は 0:05 または 1:02:03 の形式で入力してください');
+    showPickerMessage('切り出し範囲は 0:05 または 1:02:03 の形式で入力してください', 'error');
     return false;
   }
   if (end != null && end <= start) {
-    alert('切り出し終了時刻は開始時刻より後にしてください');
+    showPickerMessage('切り出し終了時刻は開始時刻より後にしてください', 'error');
     return false;
   }
   return {
@@ -1373,7 +1401,7 @@ async function dispatchDownloadJob(job) {
     console.warn('[ytdl] download window dispatch failed, running inline:', e);
     runJobItems(job.items, job.videoTitle).catch(err => {
       console.warn('[ytdl] inline job failed:', err);
-      alert(`ダウンロードに失敗しました: ${err && err.message || err}`);
+      showPickerMessage(`ダウンロードに失敗しました: ${err && err.message || err}`, 'error');
     });
   }
 }
@@ -1870,21 +1898,12 @@ function chooseMuxContainer(video, audio) {
 }
 
 async function muxAndDownload(video, audio, videoTitle, els, trim = null) {
-  if (!video || !audio) { alert('映像と音声の両方を選択してください'); return; }
-  if (video.isMuxed) { alert('選択中の映像は既に音声込みです。合成は不要です。'); return; }
-
-  // ffmpeg.wasm は wasm32。映像+音声+出力が同時にwasmヒープに乗るため、
-  // 合計が大きいと「Array buffer allocation failed」になりやすい。事前に警告。
-  const estTotal = (video.contentLength || 0) + (audio.contentLength || 0);
-  const MUX_SOFT_LIMIT = 1100 * 1024 * 1024; // ~1.1GB
-  if (estTotal > MUX_SOFT_LIMIT) {
-    const mb = Math.round(estTotal / 1024 / 1024);
-    const ok = confirm(
-      `この組み合わせは合計約${mb}MBで、ブラウザのメモリ上限により合成が失敗する可能性が高いです。\n` +
-      `より低い解像度を選ぶか、映像/音声を個別にDLすることを推奨します。\n\nそれでも合成を試しますか？`
-    );
-    if (!ok) return;
-  }
+  // 容量超過の警告は popup側(downloadMuxハンドラ)でインライン2段階確認済み。
+  // ここは委譲ウィンドウ/フォールバックで動くため、ブロッキングダイアログ(alert/confirm)は使わない。
+  // 想定外の入力は throw して runDownloadWorker のステータス表示で通知する。
+  // 合計が大きい場合の OOM は下の catch が「メモリ不足」として扱う。
+  if (!video || !audio) throw new Error('映像と音声の両方が必要です');
+  if (video.isMuxed) throw new Error('選択中の映像は既に音声込みです（合成は不要）');
 
   const buttons = [els.downloadVideo, els.downloadAudio, els.downloadPair, els.downloadMux];
   buttons.forEach(b => { if (b) b.disabled = true; });
@@ -1921,12 +1940,22 @@ async function muxAndDownload(video, audio, videoTitle, els, trim = null) {
 
 function setMuxProgress(text) {
   const el = document.getElementById('mux-progress');
-  if (el) { el.textContent = text; el.style.display = 'block'; }
+  if (el) { el.textContent = text; el.style.display = 'block'; el.style.color = ''; }
 }
 
 function clearMuxProgress() {
   const el = document.getElementById('mux-progress');
-  if (el) { el.style.display = 'none'; el.textContent = ''; }
+  if (el) { el.style.display = 'none'; el.textContent = ''; el.style.color = ''; }
+}
+
+// popup内のpicker直下メッセージ(検証エラー/容量警告)。alert/confirmはpopupを閉じてしまうため使わない。
+// #mux-progress を流用し、色だけ用途で切り替える(warn=金, error=赤)。
+function showPickerMessage(text, kind) {
+  const el = document.getElementById('mux-progress');
+  if (!el) return;
+  el.textContent = text;
+  el.style.display = 'block';
+  el.style.color = kind === 'warn' ? 'var(--gold)' : kind === 'error' ? 'var(--err)' : '';
 }
 
 function isExpectedMediaType(contentType, fmt) {
