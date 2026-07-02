@@ -134,6 +134,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           docTitle: document.title || null, // ytInitialPlayerResponse 未設定時のタイトル確実なフォールバック
           playerResponse: pr ? {
             videoDetails: pr.videoDetails ? {
+              videoId: pr.videoDetails.videoId || null, // 現在URLのvideoIdと突き合わせて陳腐化を検出する
               title: pr.videoDetails.title,
               lengthSeconds: pr.videoDetails.lengthSeconds || null,
               isLiveContent: Boolean(pr.videoDetails.isLiveContent),
@@ -169,6 +170,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   } catch (e) {
     console.warn('[ytdl] Watch page fallback failed:', e);
+  }
+
+  // Shorts等のSPA遷移では window.ytInitialPlayerResponse が現在の動画に更新されない
+  // ことがある。特に「再生不可なShort(削除済み等)」を挟むとページ側の更新が止まり、
+  // その後いくらスクロール/URL変更しても前の動画のまま固まる（要リロード）。
+  // → URL由来の videoId と一致しないページ応答は「古い別動画」なので破棄し、
+  //   現在の videoId で取得した API 応答のみを使う。
+  const pageVideoId = pageGlobals?.playerResponse?.videoDetails?.videoId || null;
+  if (pageGlobals?.playerResponse && pageVideoId && pageVideoId !== videoId) {
+    console.info(`[ytdl] stale ytInitialPlayerResponse (${pageVideoId} ≠ ${videoId}); ページ応答を無視`);
+    pageGlobals.playerResponse = null;
   }
 
   _visitorData = pageGlobals?.innertube?.visitorData || null;
