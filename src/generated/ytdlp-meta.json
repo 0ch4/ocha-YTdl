@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "extensionVersion": "0.8.1",
-  "ytDlpRelease": "2026.06.09",
-  "ytDlpCommit": "7f7bdc9",
+  "extensionVersion": "0.9.1",
+  "ytDlpRelease": "2026.07.04",
+  "ytDlpCommit": "fdec00e",
   "ejsVersion": "0.8.0",
-  "youtubeClientsRevision": "2026.06.09",
+  "youtubeClientsRevision": "2026.07.04",
   "notes": [
     "Bundled metadata used for update recommendation checks only.",
     "Runtime code is loaded only from extension-packaged files.",
