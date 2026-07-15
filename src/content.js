@@ -105,11 +105,12 @@ async function fetchFormats(videoId) {
     }
   }
 
-  // 「ログインして bot ではないことを確認してください」をそのまま出しても原因が伝わらない。
-  // 実際には Made for kids 等でこのクライアントが使えないだけで、popup なら取れる。
-  const blocked = failures.some(f => /LOGIN_REQUIRED|ログイン/.test(f));
+  // LOGIN_REQUIRED は「Made for kids だから」ではない。pot を持たないクライアントが
+  // bot 検問に掛かった時にこれが返る。頻度は IP とセッションの状態次第で変わる。
+  // popup は PO Token を生成できるので、そちらなら通ることが多い。
+  const blocked = failures.some(f => /LOGIN_REQUIRED/.test(f));
   throw new Error(blocked
-    ? 'この動画はページ内からは取得できません（Made for kids 等の制限）。拡張アイコンのパネルから試してください'
+    ? 'bot検問で弾かれました（pot不要クライアントが使えない状態）。拡張アイコンのパネルから試してください'
     : failures.join(' / ') || 'フォーマットを取得できません');
 }
 
