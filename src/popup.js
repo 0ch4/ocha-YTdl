@@ -81,6 +81,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   statusEl.textContent = '動画情報を取得中...';
 
+  await applyTrimDraft(els, videoId);
+
   // 1. Extract page globals using scripting API in MAIN world
   let pageGlobals;
   try {
@@ -1251,6 +1253,20 @@ function matchesFilter(selected, value) {
 
 function getSelectedFormat(select) {
   return select.selectedOptions[0]?._format ?? null;
+}
+
+// content.js がページ側で指定した切り出し範囲を入力欄に反映する。
+// 保存されているのは表示テキストそのものなので、手入力した場合と同じ経路で解釈される。
+async function applyTrimDraft(els, videoId) {
+  try {
+    const stored = await chrome.storage.local.get('trimDraft');
+    const draft = stored?.trimDraft;
+    if (!draft || draft.videoId !== videoId) return;
+    if (draft.startText && els.trimStart) els.trimStart.value = draft.startText;
+    if (draft.endText && els.trimEnd) els.trimEnd.value = draft.endText;
+  } catch (e) {
+    console.info('[ytdl] trim draft not applied:', e?.message || e);
+  }
 }
 
 function getTrimRangeFromInputs(els) {

@@ -23,6 +23,13 @@
     "https://jnn-pa.googleapis.com/*",
     "https://raw.githubusercontent.com/0ch4/ocha-YTdl/*"
   ],
+  "content_scripts": [
+    {
+      "matches": ["*://www.youtube.com/watch*", "*://www.youtube.com/shorts/*"],
+      "js": ["src/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
   "action": {
     "default_popup": "src/popup.html",
     "default_title": "ocha-YTdl",
