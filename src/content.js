@@ -31,6 +31,12 @@ function currentVideoId() {
   return shorts ? shorts[1] : null;
 }
 
+// Shorts は DOM の作りが別物なので、watch 用の差し込みを流用できない。
+// SPA なので location だけが確実な判定材料（watch の DOM は隠れたまま残る）。
+function isWatchPage() {
+  return new URL(location.href).pathname === '/watch';
+}
+
 function videoEl() {
   return document.querySelector('video.html5-main-video') || document.querySelector('video');
 }
@@ -646,10 +652,31 @@ function render() {
   els.panelHost.style.display = state.open ? 'block' : 'none';
 }
 
+function unmount() {
+  for (const id of [BUTTON_HOST_ID, PANEL_HOST_ID]) {
+    const host = document.getElementById(id);
+    if (!host) continue;
+    hosts.delete(host);
+    host.remove();
+  }
+  els = null;
+}
+
 function mount() {
+  // 差し込み先は watch ページの構造にしか無い。ID の存在だけで判断してはいけない:
+  //   - Shorts にも #top-level-buttons-computed があるが、あれは
+  //     ytd-shorts-player-controls > #right-controls、つまりプレイヤー右上の
+  //     操作列(字幕/その他/全画面)で、高評価の行ではない。そこへ挿すとボタンが
+  //     動画の上に出る。
+  //   - Shorts にも #middle-row はあるが ytd-watch-flexy(display:none) の中なので
+  //     パネルは永久に開かない。
+  // 実際に watch ページを見ているかを URL で判定し、器も見えているものだけ使う。
+  if (!isWatchPage()) return false;
+
   const row = document.querySelector('#top-level-buttons-computed');
   const slot = document.querySelector('#middle-row');
   if (!row || !slot) return false;
+  if (!row.offsetParent || !slot.offsetParent) return false;   // 隠れた watch DOM の残骸
   if (document.getElementById(BUTTON_HOST_ID) && document.getElementById(PANEL_HOST_ID)) return true;
 
   for (const id of [BUTTON_HOST_ID, PANEL_HOST_ID]) {
@@ -719,6 +746,9 @@ function watchForRemount() {
     remountQueued = true;
     setTimeout(() => {
       remountQueued = false;
+      // watch から Shorts へ移ったら、watch の DOM ごと隠れるだけで自前の要素は
+      // 残る。隠れた場所に居座らせず片付ける。
+      if (!isWatchPage()) { unmount(); return; }
       if (!currentVideoId()) return;
       if (document.getElementById(BUTTON_HOST_ID) && document.getElementById(PANEL_HOST_ID)) return;
       mount();
