@@ -4,7 +4,7 @@
   "ytDlpRelease": "2026.07.04",
   "ytDlpCommit": "fdec00e",
   "ejsVersion": "0.8.0",
-  "youtubeClientsRevision": "2026.07.04",
+  "youtubeClientsRevision": "master",
   "notes": [
     "Bundled metadata used for update recommendation checks only.",
     "Runtime code is loaded only from extension-packaged files.",

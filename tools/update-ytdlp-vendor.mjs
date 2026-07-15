@@ -8,8 +8,15 @@ const MANIFEST_PATH = path.join(ROOT, 'manifest.json');
 const META_PATH = path.join(ROOT, 'src/generated/ytdlp-meta.json');
 const LATEST_PATH = path.join(ROOT, 'docs/compat/latest.json');
 const SOLVER_PATH = path.join(ROOT, 'vendor/yt.solver.core.js');
+const CONFIG_PATH = path.join(ROOT, 'src/config/youtube.js');
+const SYNCED_MESSAGE_JA = '現在の同梱ロジックは最新互換性メタと同期しています。';
+const SYNCED_MESSAGE_EN = 'Bundled logic is in sync with the latest compatibility metadata.';
 
 const YTDLP_REPO = 'yt-dlp/yt-dlp';
+// クライアント定義だけは master を追う。上流はリリースを待たずに版を上げるため、
+// リリースだけを見ていると半年遅れる（2026.07.04 の時点で中身は 2026.01 世代のままだった）。
+// ejs/solver は逆に、公開済みホイールと一致している必要があるのでリリース固定。
+const CLIENTS_REF = 'master';
 const EJS_PYPI_PROJECT = 'yt-dlp-ejs';
 const USER_AGENT = 'ocha-YTdl-upstream-sync';
 
@@ -26,10 +33,27 @@ async function main() {
   const ytDlpRelease = release.tag_name || releaseArg;
   if (!ytDlpRelease) throw new Error('Could not determine yt-dlp release tag');
 
-  const [commit, pyproject] = await Promise.all([
+  const rawFile = (ref, file) => `https://raw.githubusercontent.com/${YTDLP_REPO}/${ref}/${file}`;
+  const clientsHead = await fetchJson(`https://api.github.com/repos/${YTDLP_REPO}/commits/${CLIENTS_REF}`);
+  const clientsCommit = clientsHead.sha;
+  if (!clientsCommit) throw new Error(`Could not resolve ${YTDLP_REPO}@${CLIENTS_REF}`);
+
+  const [commit, pyproject, basePy, videoPy] = await Promise.all([
     resolveGitHubTagCommit(YTDLP_REPO, ytDlpRelease),
-    fetchText(`https://raw.githubusercontent.com/${YTDLP_REPO}/${ytDlpRelease}/pyproject.toml`),
+    fetchText(rawFile(ytDlpRelease, 'pyproject.toml')),
+    fetchText(rawFile(clientsCommit, 'yt_dlp/extractor/youtube/_base.py')),
+    fetchText(rawFile(clientsCommit, 'yt_dlp/extractor/youtube/_video.py')),
   ]);
+
+  const clientDrift = diffClients(
+    await readBundledConfig(),
+    parseUpstreamClients(basePy),
+    parseDefaultClients(videoPy),
+  );
+  const clientsInSync = clientDrift.length === 0;
+  // master の SHA は毎日変わるので生成物には書かない（毎日無意味な差分が出るため）。ログにだけ残す。
+  console.log(`Clients compared against ${CLIENTS_REF} (${clientsCommit.slice(0, 7)}): ${clientsInSync ? 'in sync' : `${clientDrift.length} drifted`}`);
+  for (const entry of clientDrift) console.log(`  drift: ${entry.summaryEn}`);
 
   const ejsVersion = extractRequiredEjsVersion(pyproject);
   const wheel = await fetchEjsWheel(ejsVersion);
@@ -43,7 +67,8 @@ async function main() {
     ytDlpRelease,
     ytDlpCommit: commit.slice(0, 7),
     ejsVersion,
-    youtubeClientsRevision: ytDlpRelease,
+    // 実際に定義を突き合わせて一致した時だけ追従先を刻む。ずれている間は null。
+    youtubeClientsRevision: clientsInSync ? CLIENTS_REF : null,
     notes: [
       'Bundled metadata used for update recommendation checks only.',
       'Runtime code is loaded only from extension-packaged files.',
@@ -62,9 +87,14 @@ async function main() {
         ytDlpRelease,
         ejsVersion,
       },
-      severity: 'ok',
-      messageJa: '現在の同梱ロジックは最新互換性メタと同期しています。',
-      messageEn: 'Bundled logic is in sync with the latest compatibility metadata.',
+      severity: clientsInSync ? 'ok' : 'recommended',
+      messageJa: clientsInSync
+        ? SYNCED_MESSAGE_JA
+        : `Innertubeクライアント定義が yt-dlp ${CLIENTS_REF} とずれています: ${clientDrift.map(entry => entry.summaryJa).join(' / ')}`,
+      messageEn: clientsInSync
+        ? SYNCED_MESSAGE_EN
+        : `Innertube client definitions have drifted from yt-dlp ${CLIENTS_REF}: ${clientDrift.map(entry => entry.summaryEn).join(' / ')}`,
+      clientDrift,
       upstream: {
         ytDlpRelease,
         ytDlpUrl: release.html_url || `https://github.com/${YTDLP_REPO}/releases/tag/${ytDlpRelease}`,
@@ -135,6 +165,95 @@ async function resolveGitHubTagCommit(repo, tag) {
     if (tagObject.object?.sha) return tagObject.object.sha;
   }
   throw new Error(`Could not resolve commit for ${repo}@${tag}`);
+}
+
+// ─── Innertube クライアント定義の突き合わせ ──────────────────────────
+// リリース番号を追うだけでは、実際に壊れる箇所(クライアント定義)のズレに気づけない。
+// 上流の定義を実際にパースして比較する。パースに失敗したら黙って「同期済み」と
+// 報告するのではなく throw して CI を落とすこと。
+
+function parseUpstreamClients(source) {
+  const start = source.indexOf('INNERTUBE_CLIENTS = {');
+  if (start === -1) throw new Error('Could not find INNERTUBE_CLIENTS in yt-dlp _base.py');
+  const end = source.indexOf('\n}\n', start);
+  if (end === -1) throw new Error('Could not find the end of INNERTUBE_CLIENTS in yt-dlp _base.py');
+  const block = source.slice(start, end);
+
+  const heads = [];
+  const keyPattern = /^ {4}'([a-z0-9_]+)': \{$/gm;
+  for (let match = keyPattern.exec(block); match; match = keyPattern.exec(block)) {
+    heads.push({ key: match[1], index: match.index });
+  }
+
+  const clients = new Map();
+  heads.forEach((head, i) => {
+    const body = block.slice(head.index, i + 1 < heads.length ? heads[i + 1].index : block.length);
+    const clientName = body.match(/'clientName':\s*'([^']+)'/)?.[1];
+    const clientVersion = body.match(/'clientVersion':\s*'([^']+)'/)?.[1];
+    if (clientName && clientVersion) clients.set(head.key, { clientName, clientVersion });
+  });
+
+  if (clients.size === 0) {
+    throw new Error('Parsed zero clients from yt-dlp _base.py; the upstream format probably changed');
+  }
+  return clients;
+}
+
+function parseDefaultClients(source) {
+  const defaults = new Set();
+  for (const name of ['_DEFAULT_CLIENTS', '_DEFAULT_AUTHED_CLIENTS']) {
+    const match = source.match(new RegExp(`${name} = \\(([^)]*)\\)`));
+    if (!match) throw new Error(`Could not find ${name} in yt-dlp _video.py`);
+    for (const client of match[1].matchAll(/'([a-z0-9_]+)'/g)) defaults.add(client[1]);
+  }
+  return defaults;
+}
+
+async function readBundledConfig() {
+  const source = await readFile(CONFIG_PATH, 'utf8');
+  // config は globalThis に代入するだけなので、仮の scope を渡して評価する
+  const scope = {};
+  new Function('globalThis', source)(scope);
+  const config = scope.OCHA_YTDL_YOUTUBE_CONFIG;
+  if (!config?.innertubeClientProfiles?.length) {
+    throw new Error('Could not read innertubeClientProfiles from src/config/youtube.js');
+  }
+  return config;
+}
+
+function diffClients(config, upstreamClients, defaultClients) {
+  const drift = [];
+  const bundledKeys = new Set(config.innertubeClientProfiles.map(profile => profile.key));
+
+  for (const profile of config.innertubeClientProfiles) {
+    // page_web / web_safari はページから版を取るので固定値を持たない
+    if (!profile.clientVersion) continue;
+    const upstream = upstreamClients.get(profile.key);
+    if (!upstream) continue;
+    if (upstream.clientVersion !== profile.clientVersion) {
+      drift.push({
+        client: profile.key,
+        bundled: profile.clientVersion,
+        upstream: upstream.clientVersion,
+        summaryJa: `${profile.key} ${profile.clientVersion} → ${upstream.clientVersion}`,
+        summaryEn: `${profile.key} ${profile.clientVersion} -> ${upstream.clientVersion}`,
+      });
+    }
+  }
+
+  // 上流が既定にしているクライアントを丸ごと積み忘れている場合(android_vr がこれだった)
+  for (const key of defaultClients) {
+    if (bundledKeys.has(key)) continue;
+    drift.push({
+      client: key,
+      bundled: null,
+      upstream: upstreamClients.get(key)?.clientVersion || 'unknown',
+      summaryJa: `${key} が未同梱 (yt-dlp の既定クライアント)`,
+      summaryEn: `${key} is not bundled (a yt-dlp default client)`,
+    });
+  }
+
+  return drift;
 }
 
 function extractRequiredEjsVersion(pyproject) {
