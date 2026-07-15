@@ -12,6 +12,7 @@
 const BUTTON_HOST_ID = 'ocha-ytdl-action-host';
 const PANEL_HOST_ID = 'ocha-ytdl-panel-host';
 const TRIM_DRAFT_KEY = 'trimDraft';
+const CHUNK_TIMEOUT_MS = 30000;
 
 const state = { videoId: null, startText: null, endText: null, open: false, formats: [] };
 let els = null;
@@ -174,11 +175,7 @@ async function fetchFormatBytes(fmt, onProgress) {
   async function worker() {
     while (next < ranges.length) {
       const [start, end] = ranges[next++];
-      // 範囲は URL のクエリだけで渡すこと。Range ヘッダと併用すると、クエリで
-      // 切られた本体に対してさらにヘッダの範囲が適用され、2チャンク目以降が 416 になる。
-      const r = await fetch(rangedUrl(fmt.url, start, end));
-      if (r.status !== 200 && r.status !== 206) throw new Error(`ダウンロード失敗 (HTTP ${r.status})`);
-      const part = new Uint8Array(await r.arrayBuffer());
+      const part = await fetchChunk(fmt.url, start, end);
       out.set(part, start);
       done += part.length;
       if (onProgress) onProgress(done, total);
@@ -188,6 +185,42 @@ async function fetchFormatBytes(fmt, onProgress) {
   await Promise.all(Array.from({ length: Math.min(4, ranges.length) }, worker));
   if (done !== total) throw new Error(`サイズ不一致: ${done}/${total}`);
   return out;
+}
+
+// 1チャンクを取る。ぶら下がったまま返らない接続があるので、必ず期限を切って
+// 打ち切り、バックオフして取り直す。これが無いと Promise.all が永久に解決せず、
+// エラーも出さずに進捗が止まったまま固まる。
+async function fetchChunk(url, start, end) {
+  const backoffs = [0, 1000, 3000, 7000, 15000];
+  let lastError = null;
+
+  for (const wait of backoffs) {
+    if (wait) await new Promise(r => setTimeout(r, wait));
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), CHUNK_TIMEOUT_MS);
+    try {
+      // 範囲は URL のクエリだけで渡すこと。Range ヘッダと併用すると、クエリで
+      // 切られた本体に対してさらにヘッダの範囲が適用され、2チャンク目以降が 416 になる。
+      const r = await fetch(rangedUrl(url, start, end), { signal: abort.signal });
+      if (r.status !== 200 && r.status !== 206) {
+        lastError = new Error(`HTTP ${r.status}`);
+        continue;
+      }
+      const part = new Uint8Array(await r.arrayBuffer());
+      const want = end - start + 1;
+      if (part.length !== want) {
+        // 短く返ってきた分をそのまま書くと歯抜けのまま完了扱いになる
+        lastError = new Error(`応答が短い (${part.length}/${want})`);
+        continue;
+      }
+      return part;
+    } catch (e) {
+      lastError = abort.signal.aborted ? new Error('応答がありません（時間切れ）') : e;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw new Error(`ダウンロード失敗: ${lastError?.message || '原因不明'}`);
 }
 
 // ─── 合成（サンドボックス iframe の ffmpeg.wasm）─────────────
@@ -541,9 +574,15 @@ function selectedAudioFormat() {
 
 function refreshExtOptions() {
   const height = els.quality.value;
-  const exts = [...new Set(state.formats.filter(f => f.hasVideo && !f.hasAudio && String(f.height) === height).map(f => f.ext))];
+  const at = state.formats.filter(f => f.hasVideo && !f.hasAudio && String(f.height) === height);
+  // 同じ画質でも webm(VP9) は mp4(AV1) よりかなり重い。2160p では 342MB と 229MB
+  // ほど違うので、既定は mp4 にする。配列順のままだと重い方が既定になってしまう。
+  const exts = [...new Set(at.map(f => f.ext))].sort((a, b) => (a === 'mp4' ? -1 : b === 'mp4' ? 1 : 0));
   const keep = els.ext.value;
-  fillSelect(els.ext, exts.map(e => ({ value: e, label: e })));
+  fillSelect(els.ext, exts.map(e => {
+    const size = at.filter(f => f.ext === e).sort((x, y) => y.bitrate - x.bitrate)[0]?.contentLength;
+    return { value: e, label: size ? `${e} ${(size / 1048576).toFixed(0)}MB` : e };
+  }));
   if (exts.includes(keep)) els.ext.value = keep;
 }
 
