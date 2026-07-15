@@ -81,7 +81,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   statusEl.textContent = '動画情報を取得中...';
 
-  await applyTrimDraft(els, videoId);
+  await applyTrimDraft(pickerEls, videoId);
 
   // 1. Extract page globals using scripting API in MAIN world
   let pageGlobals;

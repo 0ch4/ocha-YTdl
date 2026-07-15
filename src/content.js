@@ -153,30 +153,41 @@ function rangedUrl(url, start, end) {
 }
 
 async function fetchFormatBytes(fmt, onProgress) {
-  const chunkSize = CFG()?.rangeChunkSize || (10 << 20);
   const total = fmt.contentLength;
-  const parts = [];
-  let received = 0;
-  let start = 0;
-
-  for (;;) {
-    const end = total ? Math.min(start + chunkSize - 1, total - 1) : start + chunkSize - 1;
-    const resp = await fetch(rangedUrl(fmt.url, start, end), { headers: { Range: `bytes=${start}-${end}` } });
-    if (!resp.ok && resp.status !== 206) throw new Error(`ダウンロード失敗 (HTTP ${resp.status})`);
-    const buf = new Uint8Array(await resp.arrayBuffer());
-    if (!buf.length) break;
-    parts.push(buf);
-    received += buf.length;
-    start += buf.length;
-    if (onProgress) onProgress(received, total);
-    if (total && received >= total) break;
-    if (!total && buf.length < chunkSize) break;
+  if (!total) {
+    const r = await fetch(fmt.url);
+    if (r.status !== 200 && r.status !== 206) throw new Error(`ダウンロード失敗 (HTTP ${r.status})`);
+    return new Uint8Array(await r.arrayBuffer());
   }
 
-  const merged = new Uint8Array(received);
-  let at = 0;
-  for (const part of parts) { merged.set(part, at); at += part.length; }
-  return merged;
+  // 全体を1リクエストで要求すると弾かれるので、必ず2つ以上に割る。
+  const chunkSize = Math.min(CFG()?.rangeChunkSize || (10 << 20), Math.max(1, Math.ceil(total / 2)));
+  const ranges = [];
+  for (let start = 0; start < total; start += chunkSize) {
+    ranges.push([start, Math.min(start + chunkSize, total) - 1]);
+  }
+
+  const out = new Uint8Array(total);
+  let done = 0;
+  let next = 0;
+
+  async function worker() {
+    while (next < ranges.length) {
+      const [start, end] = ranges[next++];
+      // 範囲は URL のクエリだけで渡すこと。Range ヘッダと併用すると、クエリで
+      // 切られた本体に対してさらにヘッダの範囲が適用され、2チャンク目以降が 416 になる。
+      const r = await fetch(rangedUrl(fmt.url, start, end));
+      if (r.status !== 200 && r.status !== 206) throw new Error(`ダウンロード失敗 (HTTP ${r.status})`);
+      const part = new Uint8Array(await r.arrayBuffer());
+      out.set(part, start);
+      done += part.length;
+      if (onProgress) onProgress(done, total);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(4, ranges.length) }, worker));
+  if (done !== total) throw new Error(`サイズ不一致: ${done}/${total}`);
+  return out;
 }
 
 // ─── 合成（サンドボックス iframe の ffmpeg.wasm）─────────────
