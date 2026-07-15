@@ -1,9 +1,6 @@
 # ocha-YTdl
 
-Chrome Manifest V3 extension for inspecting and downloading YouTube video formats from the current tab.
-
-![ocha-YTdl popup screenshot](docs/images/sc.png)
-The sample image is `docs/images/sc.png`.
+A Chrome Manifest V3 extension that adds a **切り出し** (clip) button to the YouTube watch page. Mark a range straight off the player, pick a quality, and save. No server and no external tools — the download and the mux both run in the browser.
 
 ## Install locally
 
@@ -26,17 +23,35 @@ powershell -ExecutionPolicy Bypass -File tools\update-local.ps1
 
 After updating files, reload `ocha-YTdl` from `chrome://extensions`.
 
+## Usage
+
+Open a watch page and a **切り出し** (clip) button appears beside like and share. Pressing it opens a panel below.
+
+1. **Range** (optional) — seek the video and press `現在位置` (current position) to set the start and end. No typing timestamps. Leave it empty to save the whole video.
+2. **Save** — choose quality, container and audio, then press `保存` (save).
+3. A small window opens, downloads and muxes, and closes itself when done.
+
+That window is independent of the page, so **moving to another video mid-download does not interrupt it**.
+
+## When a video will not load, use the toolbar icon
+
+The in-page panel only uses the clients that need no PO Token and no signature work (`android_vr` and `visionos`). When those are refused for a video, the panel says so.
+
+Press the ocha-YTdl toolbar icon instead. That path generates a PO Token, resolves `n` and signature challenges, and falls back across several clients, so it can often fetch what the page panel cannot. It also lists every format, including video-only and audio-only.
+
+![The panel opened from the toolbar icon](docs/images/sc.png)
+
 ## Features
 
 - Supports regular YouTube watch pages and Shorts URLs.
-- Lists muxed video+audio, video-only, and audio-only formats.
-- Provides separate selectors for resolution, FPS, extension, and audio format.
-- Supports optional time-range clipping such as `5-10` or `0:05~0:10`.
-- Muxes the selected video and audio in the browser with ffmpeg.wasm.
+- Marks a clip range from the player position, in the page.
+- Saves a chosen quality, container and audio track, muxed in the browser with ffmpeg.wasm.
+- Runs downloads in an independent window, so leaving the page does not interrupt them.
+- The toolbar panel lists every format: muxed video+audio, video-only and audio-only.
 - Attempts multiple YouTube Innertube clients to expose adaptive formats such as 720p and 1080p when available.
 - Resolves YouTube `n` and signature challenges in a sandboxed page.
 - Attempts PO Token generation and capture to improve high-resolution format access.
-- Enables the extension action on YouTube tabs and disables it elsewhere.
+- Both the in-page UI and the download window follow YouTube's light and dark themes.
 - Checks hosted compatibility metadata JSON and shows an update recommendation when bundled YouTube extraction logic may be stale.
 
 ## Layout
