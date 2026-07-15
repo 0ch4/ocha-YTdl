@@ -44,6 +44,18 @@ function parseTimeText(text) {
   return parts.reduce((acc, part) => acc * 60 + part, 0);
 }
 
+// muxer へ渡す時刻。popup.js の formatSecondsForFfmpeg と同じ HH:MM:SS 形式にする。
+// 表示用の "0:06" をそのまま渡さないこと。
+function formatForFfmpeg(seconds) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds - h * 3600 - m * 60;
+  const sec = s % 1 === 0
+    ? String(s).padStart(2, '0')
+    : s.toFixed(3).replace(/0+$/, '').replace(/\.$/, '').padStart(2, '0');
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${sec}`;
+}
+
 // popup 側の既存の入力欄にそのまま流し込めるよう、表示テキストのまま保存する。
 async function persist() {
   try {
@@ -696,9 +708,9 @@ async function doSave() {
     if (s == null && e == null) return null;
     if (s != null && e != null && e <= s) return 'invalid';
     return {
-      start: state.startText || '0:00',
-      end: state.endText || null,
-      duration: (s != null && e != null) ? formatTime(e - s) : null
+      start: formatForFfmpeg(s ?? 0),
+      end: e == null ? null : formatForFfmpeg(e),
+      duration: (s != null && e != null) ? formatForFfmpeg(e - s) : null
     };
   })();
   if (trim === 'invalid') { els.saveNote.textContent = '終了は開始より後にしてください'; return; }
@@ -715,6 +727,10 @@ async function doSave() {
       els.saveNote.textContent = `音声 ${humanSize(got)}${total ? ' / ' + humanSize(total) : ''}`);
 
     els.saveNote.textContent = '合成中...';
+    // muxer は data.trim が falsy だとカット自体を飛ばして全長を返す。切り出しが
+    // 効かない時にここを疑えるよう、送る中身をそのまま残す。
+    console.info('[ytdl] muxへ送るtrim:', trim ? JSON.stringify(trim) : 'なし（全長で出力される）',
+      '画面の指定:', { 開始: state.startText, 終了: state.endText });
     const out = await runMuxerTask(reqId => {
       const msg = {
         action: 'mux', reqId,
@@ -725,7 +741,9 @@ async function doSave() {
       return msg;
     }, [videoBytes.buffer, audioBytes.buffer], '合成', text => { els.saveNote.textContent = text; });
 
-    const suffix = `_${video.height}p` + (trim ? `_${(trim.start || '').replace(/:/g, '')}-${(trim.end || '').replace(/:/g, '')}` : '');
+    // ファイル名は ffmpeg 用の 00:00:06 ではなく画面表示の 0:06 から作る
+    const suffix = `_${video.height}p`
+      + (trim ? `_${(state.startText || '0:00').replace(/:/g, '')}-${(state.endText || '').replace(/:/g, '')}` : '');
     saveBlob(new Blob([out], { type: 'video/mp4' }), safeFilename(title, suffix, 'mp4'));
     els.saveNote.textContent = '保存しました';
   } catch (e) {
