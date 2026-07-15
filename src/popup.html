@@ -59,6 +59,30 @@
       --ring: 0 0 0 2px rgba(6, 95, 212, 0.32);
     }
 
+    /* ダウンロード専用ウィンドウ。進捗バーと処理名だけを見せる。 */
+    body.worker {
+      padding: 16px 18px;
+    }
+    body.worker #status {
+      /* 動画タイトル。長いので2行で切る */
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.4;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      margin: 0;
+    }
+    body.worker #mux-progress {
+      /* 処理名がこのウィンドウの主役 */
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text);
+      margin: 0;
+      font-variant-numeric: tabular-nums;
+    }
+
     /* YouTube 風の進捗バー。ワーカー時だけ出す。 */
     #job-progress {
       display: none;
@@ -273,7 +297,8 @@
       <span class="maint-dot"></span>
       <span id="maintenance-pill-text">確認中</span>
     </span>
-    <span id="version">v0.9.1</span>
+    <!-- 版は popup.js が manifest から入れる。ここに書くと更新し忘れて嘘になる -->
+    <span id="version"></span>
   </header>
 
   <section class="hero" aria-label="動画情報">

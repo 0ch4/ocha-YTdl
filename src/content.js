@@ -248,12 +248,20 @@ const THEME = {
     // .contribYtLightShapeStaticRimLightTonal::before
     rim: 'rgba(255,255,255,.1)',
     // .contribYtLightShapeStaticWashLightTonal
-    wash: 'rgba(255,255,255,.05)'
+    wash: 'rgba(255,255,255,.05)',
+    // select を開いた時の項目。ここだけは不透明でなければならない:
+    // --yt-spec-additive-background は半透明の白なので、OS が描く option の下地が
+    // 透けて白くなり、白い文字と重なって読めなくなる。値は YouTube の実メニュー
+    // 背景(rgb(33,33,33))から採った。
+    menuBg: '#212121',
+    menuFg: '#f1f1f1'
   },
   light: {
     hover: 'rgba(0,0,0,.1)',
     rim: 'rgba(0,0,0,.05)',
-    wash: 'rgba(255,255,255,.2)'
+    wash: 'rgba(255,255,255,.2)',
+    menuBg: '#fff',
+    menuFg: '#0f0f0f'
   }
 };
 const hosts = new Set();
@@ -264,6 +272,8 @@ function applyTheme() {
     host.style.setProperty('--ocha-hover', t.hover);
     host.style.setProperty('--ocha-rim', t.rim);
     host.style.setProperty('--ocha-wash', t.wash);
+    host.style.setProperty('--ocha-menu-bg', t.menuBg);
+    host.style.setProperty('--ocha-menu-fg', t.menuFg);
   }
 }
 
@@ -311,6 +321,12 @@ function styleSheet() {
     }
     .sel:hover, .sel:focus-visible { background: var(--ocha-hover, ${THEME.dark.hover}); }
     .sel:disabled { opacity: .5; cursor: default; }
+    /* 展開した項目は OS が描くので、閉じている時の半透明の背景を継がせてはいけない。
+       透けて白地になり、白文字と重なって読めなくなる。不透明色を明示する。 */
+    .sel option {
+      background: var(--ocha-menu-bg, ${THEME.dark.menuBg});
+      color: var(--ocha-menu-fg, ${THEME.dark.menuFg});
+    }
     .chip:disabled { opacity: .5; cursor: default; }
     .pill:hover, .chip:hover, .ghost:hover,
     .pill:focus-visible, .chip:focus-visible, .ghost:focus-visible {

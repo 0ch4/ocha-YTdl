@@ -1464,9 +1464,13 @@ async function runJobItems(items, videoTitle) {
 async function runDownloadWorker(jobId) {
   const key = 'ochaJob:' + jobId;
   const statusEl = document.getElementById('status');
+  // このウィンドウは進捗を見せるためだけに開く。ブランドも版もメンテ表示も要らない。
+  // 残すのは「今なにをしているか」と進捗バーだけ。
   document.querySelector('.hero')?.style.setProperty('display', 'none');
+  document.querySelector('header')?.style.setProperty('display', 'none');
   const hide = id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; };
   ['maintenance-pill', 'nsig-status', 'pot-status', 'maintenance-status', 'maintenance-actions', 'quality-picker', 'format-debug', 'quality-note'].forEach(hide);
+  document.body.classList.add('worker');
 
   let job = null;
   try {
