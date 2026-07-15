@@ -7,13 +7,14 @@ globalThis.OCHA_YTDL_YOUTUBE_CONFIG = Object.freeze({
   defaultWebClientVersion: '2.20260708.00.00',
   rangeChunkSize: 10 << 20,
   potProviderUrl: null,
-  potFreeSources: ['android_vr', 'tv', 'tv_downgraded'],
+  potFreeSources: ['android_vr', 'visionos', 'tv', 'tv_downgraded'],
   clientNameHeaders: {
     WEB: '1',
     WEB_EMBEDDED_PLAYER: '56',
     WEB_REMIX: '67',
     ANDROID: '3',
     ANDROID_VR: '28',
+    VISIONOS: '101',
     IOS: '5',
     TVHTML5: '7'
   },
@@ -34,6 +35,25 @@ globalThis.OCHA_YTDL_YOUTUBE_CONFIG = Object.freeze({
         userAgent: 'com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
         osName: 'Android',
         osVersion: '12L',
+        hl: 'ja',
+        gl: 'JP'
+      }
+    },
+    {
+      // android_vr と同じ性質(直URL/pot不要/JSプレーヤー不要)を持つ二枚目のカード。
+      // android_vr が塞がれた時の保険として android_vr の直後に置く。
+      // 「Made for kids」動画は android_vr 同様このクライアントでも取得不可。
+      key: 'visionos',
+      clientName: 'VISIONOS',
+      clientVersion: '1.02',
+      contextClient: {
+        clientName: 'VISIONOS',
+        clientVersion: '1.02',
+        deviceMake: 'Apple',
+        deviceModel: 'RealityDevice17,1',
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15',
+        osName: 'visionOS',
+        osVersion: '26.5.23O471',
         hl: 'ja',
         gl: 'JP'
       }
