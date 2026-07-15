@@ -23,8 +23,6 @@
       --on-accent: #181c14;     /* グリーン面上の文字 */
       --r: 11px; --r-md: 8px; --r-sm: 6px;
       --ring: 0 0 0 2px rgba(143, 179, 124, 0.32);
-      /* ブランド/見出し/タイトルに和の明朝体。「お茶」の世界観＝手仕事感。Latinは Georgia、和文はOS同梱の明朝へ */
-      --serif: Georgia, 'Yu Mincho', YuMincho, 'Hiragino Mincho ProN', 'Noto Serif JP', 'Songti SC', serif;
       --ease: cubic-bezier(0.32, 0.08, 0.24, 1);
     }
 
@@ -56,7 +54,7 @@
       border-left: 7px solid var(--bg);
       border-top: 4.5px solid transparent; border-bottom: 4.5px solid transparent;
     }
-    .brand-name { font-family: var(--serif); font-size: 15px; font-weight: 600; letter-spacing: 0.2px; color: var(--text); }
+    .brand-name { font-size: 15px; font-weight: 600; letter-spacing: 0.2px; color: var(--text); }
     .brand-name .dim { color: var(--dim); font-weight: 500; }
     #version { font-size: 10px; color: var(--dim); margin-left: auto; font-variant-numeric: tabular-nums; }
 
@@ -94,7 +92,6 @@
     }
     .hero-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
     #video-title {
-      font-family: var(--serif);
       font-size: 14.5px; font-weight: 600; color: var(--text); line-height: 1.4;
       display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
     }
@@ -122,7 +119,7 @@
       display: none; grid-template-columns: 1fr; gap: 10px; margin-bottom: 12px;
       padding: 0;
     }
-    .picker-heading { margin: 0; font-family: var(--serif); color: var(--muted); font-size: 12.5px; font-weight: 600; letter-spacing: 0; }
+    .picker-heading { margin: 0; color: var(--muted); font-size: 12.5px; font-weight: 600; letter-spacing: 0; }
     .picker-row { display: grid; grid-template-columns: 1fr; gap: 5px; }
     .picker-filters { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 7px; }
     .picker-actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 7px; }
@@ -171,7 +168,7 @@
 
     /* ── sections / format list ───────────────────────── */
     .section { display: none; margin-bottom: 11px; }
-    .section-label { font-family: var(--serif); font-size: 12.5px; font-weight: 600; color: var(--muted); letter-spacing: 0; margin-bottom: 7px; }
+    .section-label { font-size: 12.5px; font-weight: 600; color: var(--muted); letter-spacing: 0; margin-bottom: 7px; }
     .fmt-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
     .fmt-item {
       display: flex; align-items: center; justify-content: space-between; gap: 8px;
