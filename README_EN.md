@@ -25,7 +25,11 @@ After updating files, reload `ocha-YTdl` from `chrome://extensions`.
 
 ## Usage
 
-Open a watch page and a **切り出し** (clip) button appears beside like and share. Pressing it opens a panel below.
+Open a watch page and a **切り出し** (clip) button appears beside like and share.
+
+![The clip button added to the watch page](docs/images/clip-button.png)
+
+Pressing it opens a panel below.
 
 1. **Range** (optional) — seek the video and press `現在位置` (current position) to set the start and end. No typing timestamps. Leave it empty to save the whole video.
 2. **Save** — choose quality, container and audio, then press `保存` (save).
