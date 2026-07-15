@@ -81,6 +81,103 @@ const YT_DIM = 'var(--yt-spec-text-secondary, #aaa)';
 const YT_FILL = 'var(--yt-spec-additive-background, rgba(255,255,255,.1))';
 const YT_FONT = 'font-family:"Roboto","Arial",sans-serif;';
 
+// 純正ボタンから実測した値。純正はいずれも難読化された変数(--t416e5931fc464589 等)を
+// 経由しているが、あの名前はデプロイごとに変わるので参照してはいけない。
+// テーマは <html> の dark 属性の有無で判定し、値はこちらで持つ。
+const THEME = {
+  dark: {
+    // .ytSpecButtonShapeNextMono.ytSpecButtonShapeNextTonal:hover
+    hover: 'rgba(255,255,255,.2)',
+    // .contribYtLightShapeStaticRimLightTonal::before
+    rim: 'rgba(255,255,255,.1)',
+    // .contribYtLightShapeStaticWashLightTonal
+    wash: 'rgba(255,255,255,.05)'
+  },
+  light: {
+    hover: 'rgba(0,0,0,.1)',
+    rim: 'rgba(0,0,0,.05)',
+    wash: 'rgba(255,255,255,.2)'
+  }
+};
+const hosts = new Set();
+
+function applyTheme() {
+  const t = document.documentElement.hasAttribute('dark') ? THEME.dark : THEME.light;
+  for (const host of hosts) {
+    host.style.setProperty('--ocha-hover', t.hover);
+    host.style.setProperty('--ocha-rim', t.rim);
+    host.style.setProperty('--ocha-wash', t.wash);
+  }
+}
+
+// テーマ切り替えは <html> の dark 属性の付け外しで起きる
+new MutationObserver(applyTheme)
+  .observe(document.documentElement, { attributes: true, attributeFilter: ['dark'] });
+
+function styleSheet() {
+  // :hover は style 属性では表現できないので shadow root に <style> を持たせる。
+  // textContent は TrustedHTML のシンクではないため Trusted Types に抵触しない。
+  const style = document.createElement('style');
+  style.textContent = `
+    .pill, .chip, .ghost {
+      ${YT_FONT}
+      border: 0;
+      color: ${YT_TEXT};
+      font-weight: 500;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      white-space: nowrap;
+      position: relative;
+      overflow: hidden;
+      transition: background-color 0.1s ease;
+    }
+    .pill {
+      height: 40px; border-radius: 20px; padding: 0 16px; gap: 6px;
+      background: ${YT_FILL}; font-size: 14px;
+    }
+    .chip {
+      height: 32px; border-radius: 16px; padding: 0 14px;
+      background: ${YT_FILL}; font-size: 13px;
+    }
+    .ghost {
+      height: 32px; border-radius: 16px; padding: 0 12px;
+      background: transparent; color: ${YT_DIM}; font-size: 13px; font-weight: 400;
+    }
+    .pill:hover, .chip:hover, .ghost:hover,
+    .pill:focus-visible, .chip:focus-visible, .ghost:focus-visible {
+      background: var(--ocha-hover, ${THEME.dark.hover});
+    }
+
+    /* 純正の tonal ボタンは面の上に yt-light-shape を重ねている。中身は2層で、
+       上半分からにじむ「ウォッシュ」と、縁 0.5px だけの「リム」。
+       ここでは要素を足さず疑似要素で同じものを描く。純正も shape が最後の子なので、
+       アイコンや文字の上に乗るのは同じ挙動。 */
+    .pill::before, .chip::before {          /* ウォッシュ: 上半分にはみ出す箱をぼかし、overflow で切る */
+      content: "";
+      position: absolute;
+      left: 0; bottom: 50%;
+      width: 100%; height: 100%;
+      border-radius: inherit;
+      background: var(--ocha-wash, ${THEME.dark.wash});
+      filter: blur(10px);
+      pointer-events: none;
+    }
+    .pill::after, .chip::after {            /* リム: padding 0.5px の輪だけをマスクで残す */
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      padding: 0.5px;
+      background: linear-gradient(var(--ocha-rim, ${THEME.dark.rim}), transparent 75%);
+      mask: linear-gradient(#fff 0, #fff 0) content-box exclude,
+            linear-gradient(#fff 0, #fff 0) exclude;
+      pointer-events: none;
+    }
+  `;
+  return style;
+}
+
 // 隣の 共有 / 保存 はいずれも 24x24 のアイコンを伴うので、揃えないとここだけ浮く。
 // innerHTML は使えないため createElementNS で組む。
 function cutIcon() {
@@ -102,16 +199,15 @@ function cutIcon() {
 }
 
 function buildButton() {
-  const host = el('div', { id: BUTTON_HOST_ID }, 'display:flex;align-items:center;');
+  const host = el('div', { id: BUTTON_HOST_ID }, 'display:flex;align-items:center;margin-left:8px;');
   const root = host.attachShadow({ mode: 'open' });
-  // YouTube のピル: 高さ40px / radius 20px / additive背景 / Roboto 14px 500 / padding 0 16px
-  const button = el('button', { type: 'button' },
-    `${YT_FONT}height:40px;border:0;border-radius:20px;padding:0 16px;margin-left:8px;`
-    + `background:${YT_FILL};color:${YT_TEXT};font-size:14px;font-weight:500;`
-    + 'cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:6px;');
+  hosts.add(host);
+  root.appendChild(styleSheet());
+  // 純正ピルと同寸: 高さ40px / radius 20px / additive背景 / Roboto 14px 500 / padding 0 16px
+  const button = el('button', { type: 'button', className: 'pill' });
   button.appendChild(cutIcon());
   button.appendChild(el('span', { textContent: '切り出し' }));
-  const count = el('span', { textContent: '' }, `color:${YT_DIM};font-size:12px;`);
+  const count = el('span', { textContent: '' }, `color:${YT_DIM};font-size:12px;font-weight:400;`);
   button.addEventListener('click', () => {
     state.open = !state.open;
     render();
@@ -127,14 +223,10 @@ function labelledRow(label, onSet, onClear) {
   const value = el('span', { textContent: '—' },
     `color:${YT_TEXT};font-size:14px;font-weight:500;min-width:4.5em;font-variant-numeric:tabular-nums;`);
   row.appendChild(value);
-  const set = el('button', { type: 'button', textContent: '現在位置' },
-    `${YT_FONT}height:32px;border:0;border-radius:16px;padding:0 14px;background:${YT_FILL};`
-    + `color:${YT_TEXT};font-size:13px;font-weight:500;cursor:pointer;`);
+  const set = el('button', { type: 'button', textContent: '現在位置', className: 'chip' });
   set.addEventListener('click', onSet);
   row.appendChild(set);
-  const clear = el('button', { type: 'button', textContent: '解除' },
-    `${YT_FONT}height:32px;border:0;border-radius:16px;padding:0 12px;background:transparent;`
-    + `color:${YT_DIM};font-size:13px;cursor:pointer;`);
+  const clear = el('button', { type: 'button', textContent: '解除', className: 'ghost' });
   clear.addEventListener('click', onClear);
   row.appendChild(clear);
   return { row, value };
@@ -143,6 +235,8 @@ function labelledRow(label, onSet, onClear) {
 function buildPanel() {
   const host = el('div', { id: PANEL_HOST_ID });
   const root = host.attachShadow({ mode: 'open' });
+  hosts.add(host);
+  root.appendChild(styleSheet());
   const card = el('div', {},
     `${YT_FONT}margin:8px 0 0;padding:12px 16px;border-radius:12px;background:${YT_FILL};`
     + 'display:flex;flex-wrap:wrap;align-items:center;gap:10px 24px;');
@@ -200,13 +294,19 @@ function mount() {
   if (!row || !slot) return false;
   if (document.getElementById(BUTTON_HOST_ID) && document.getElementById(PANEL_HOST_ID)) return true;
 
-  document.getElementById(BUTTON_HOST_ID)?.remove();
-  document.getElementById(PANEL_HOST_ID)?.remove();
+  for (const id of [BUTTON_HOST_ID, PANEL_HOST_ID]) {
+    const stale = document.getElementById(id);
+    if (stale) {
+      hosts.delete(stale);
+      stale.remove();
+    }
+  }
 
   const button = buildButton();
   const panel = buildPanel();
   row.appendChild(button.host);
   slot.appendChild(panel.host);
+  applyTheme();
 
   els = {
     count: button.count,
