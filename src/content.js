@@ -120,6 +120,17 @@ const PAGE_CLIENTS = ['android_vr', 'visionos'];
 // 切り替わる。isolated world からは ytcfg を読めないが、ページのインライン script の
 // textContent は読めるので、そこから拾う。
 let _visitorData = null;
+let _title = null;
+
+// 応答から取れなかった時のフォールバック。popup.js:cleanYouTubeDocTitle と同じ扱い:
+// document.title は未読通知があると "(4) タイトル - YouTube" になる。
+function docTitle() {
+  const t = String(document.title || '')
+    .replace(/^\(\d+\)\s*/, '')                  // 未読通知数の接頭辞
+    .replace(/\s*[-–—]\s*YouTube\s*$/i, '')
+    .trim();
+  return t && t.toLowerCase() !== 'youtube' ? t : null;
+}
 
 function visitorData() {
   if (_visitorData) return _visitorData;
@@ -193,6 +204,10 @@ async function fetchWithClient(videoId, profile, cfg) {
   }
   const sd = data?.streamingData;
   if (!sd) throw new Error('streamingData がありません');
+
+  // タイトルは応答のものを使う。document.title には未読通知の "(4) " が付くので
+  // ファイル名にそのまま入ってしまう（popup.js:cleanYouTubeDocTitle も同じ理由で剥がす）。
+  _title = data?.videoDetails?.title || _title;
 
   // ここで組み立てる形は popup.js:349-361 が作るものと同じ契約。ワーカー
   // (popup.html?job=) の runJobItems → fetchFormatBytes がそのまま消費する。
@@ -577,7 +592,7 @@ async function doSave() {
     const res = await chrome.runtime.sendMessage({
       type: 'ocha:download',
       job: {
-        videoTitle: document.title.replace(/\s*-\s*YouTube\s*$/, ''),
+        videoTitle: _title || docTitle() || 'video',
         items: [{ kind: 'mux', video: v, audio: a, trim }],
         ctx: { videoId: state.videoId, visitorData: visitorData() },
         // ワーカーは拡張ページなので YouTube のテーマを自力で知れない。ここで渡す。
@@ -681,6 +696,7 @@ async function init() {
     state.endText = null;
     state.open = false;
     state.formats = [];
+    _title = null;
     await restore();
   }
   mount();
