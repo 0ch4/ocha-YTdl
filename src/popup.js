@@ -1603,22 +1603,25 @@ async function _ensurePotOnce() {
     }
   }
 
-  // 2) 本命: ブラウザ内で WebPO を生成（住宅IP・BotGuardの最適環境）
-  //    player pot として tv に送るため video_id にバインド
+  // この _pot は GVS(googlevideo) ダウンロードURLに &pot= として付ける用途。
+  // GVS pot は visitorData にバインドされている必要がある（video_id バインドは player pot 用）。
+
+  // 2) 本命: ページが実再生で使った GVS pot を background.js が横取り保存したもの。
+  //    visitorData バインドの正真正銘の GVS pot なので最も確実（要・動画を数秒再生）。
   try {
-    const t = await generatePoTokenInBrowser(_videoId || _visitorData || '');
+    const { gvsPot } = await chrome.storage.session.get('gvsPot');
+    if (gvsPot) { _pot = gvsPot; return _pot; }
+  } catch (_) {}
+
+  // 3) フォールバック: ブラウザ内で WebPO を生成（住宅IP・BotGuardの最適環境）。
+  //    GVS 用なので visitorData にバインド（POT_PROVIDER の content_binding と同じ）。
+  try {
+    const t = await generatePoTokenInBrowser(_visitorData || _videoId || '');
     if (t) { _pot = t; return _pot; }
   } catch (e) {
     console.warn('[ytdl] in-browser pot generation failed:', e);
   }
 
-  // 3) フォールバック: ページが使用中の pot を横取り（background.js が保存）
-  try {
-    const { gvsPot } = await chrome.storage.session.get('gvsPot');
-    _pot = gvsPot || null;
-  } catch (_) {
-    _pot = null;
-  }
   return _pot;
 }
 
