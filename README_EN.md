@@ -5,19 +5,6 @@ Chrome Manifest V3 extension for inspecting and downloading YouTube video format
 ![ocha-YTdl popup screenshot](docs/images/sc.png)
 The sample image is `docs/images/sc.png`.
 
-## Features
-
-- Supports regular YouTube watch pages and Shorts URLs.
-- Lists muxed video+audio, video-only, and audio-only formats.
-- Provides separate selectors for resolution, FPS, extension, and audio format.
-- Supports optional time-range clipping such as `5-10` or `0:05~0:10`.
-- Muxes the selected video and audio in the browser with ffmpeg.wasm.
-- Attempts multiple YouTube Innertube clients to expose adaptive formats such as 720p and 1080p when available.
-- Resolves YouTube `n` and signature challenges in a sandboxed page.
-- Attempts PO Token generation and capture to improve high-resolution format access.
-- Enables the extension action on YouTube tabs and disables it elsewhere.
-- Checks hosted compatibility metadata JSON and shows an update recommendation when bundled YouTube extraction logic may be stale.
-
 ## Install locally
 
 1. Open `chrome://extensions`.
@@ -38,6 +25,19 @@ powershell -ExecutionPolicy Bypass -File tools\update-local.ps1
 ```
 
 After updating files, reload `ocha-YTdl` from `chrome://extensions`.
+
+## Features
+
+- Supports regular YouTube watch pages and Shorts URLs.
+- Lists muxed video+audio, video-only, and audio-only formats.
+- Provides separate selectors for resolution, FPS, extension, and audio format.
+- Supports optional time-range clipping such as `5-10` or `0:05~0:10`.
+- Muxes the selected video and audio in the browser with ffmpeg.wasm.
+- Attempts multiple YouTube Innertube clients to expose adaptive formats such as 720p and 1080p when available.
+- Resolves YouTube `n` and signature challenges in a sandboxed page.
+- Attempts PO Token generation and capture to improve high-resolution format access.
+- Enables the extension action on YouTube tabs and disables it elsewhere.
+- Checks hosted compatibility metadata JSON and shows an update recommendation when bundled YouTube extraction logic may be stale.
 
 ## Layout
 

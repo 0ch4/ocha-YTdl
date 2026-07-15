@@ -7,19 +7,6 @@ English README: [README_EN.md](README_EN.md)
 ![ocha-YTdl popup screenshot](docs/images/sc.png)
 サンプル画像は `docs/images/sc.png` を参照します。
 
-## 機能
-
-- 通常の YouTube 動画ページと Shorts URL に対応
-- 「動画 + 音声」「映像のみ」「音声のみ」のフォーマットを一覧表示
-- 解像度、FPS、拡張子、音声フォーマットを個別に選択してダウンロード
-- `5-10` や `0:05~0:10` のような任意の時間範囲を指定して切り出し保存
-- 選択した映像と音声を、ブラウザ内の ffmpeg.wasm で合成して保存
-- 720p/1080p などの adaptive format を取得するため、複数の YouTube Innertube クライアントを試行
-- YouTube の `n` challenge / signature を sandbox ページ内で解決
-- PO Token の生成・検出を試行し、高解像度フォーマットの取得成功率を改善
-- YouTube を開いているタブでは拡張機能アイコンを有効化し、それ以外では無効化
-- GitHub 上の互換性メタ JSON を確認し、YouTube 抽出ロジックの更新推奨を表示
-
 ## ローカルインストール
 
 1. Chrome で `chrome://extensions` を開く
@@ -40,6 +27,19 @@ powershell -ExecutionPolicy Bypass -File tools\update-local.ps1
 ```
 
 更新後は `chrome://extensions` で `ocha-YTdl` を再読み込みしてください。
+
+## 機能
+
+- 通常の YouTube 動画ページと Shorts URL に対応
+- 「動画 + 音声」「映像のみ」「音声のみ」のフォーマットを一覧表示
+- 解像度、FPS、拡張子、音声フォーマットを個別に選択してダウンロード
+- `5-10` や `0:05~0:10` のような任意の時間範囲を指定して切り出し保存
+- 選択した映像と音声を、ブラウザ内の ffmpeg.wasm で合成して保存
+- 720p/1080p などの adaptive format を取得するため、複数の YouTube Innertube クライアントを試行
+- YouTube の `n` challenge / signature を sandbox ページ内で解決
+- PO Token の生成・検出を試行し、高解像度フォーマットの取得成功率を改善
+- YouTube を開いているタブでは拡張機能アイコンを有効化し、それ以外では無効化
+- GitHub 上の互換性メタ JSON を確認し、YouTube 抽出ロジックの更新推奨を表示
 
 ## フォルダ構成
 
