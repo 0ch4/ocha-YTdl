@@ -85,10 +85,27 @@ function el(tag, props = {}, styles = '') {
 
 const CFG = () => globalThis.OCHA_YTDL_YOUTUBE_CONFIG;
 
-// ページ内から使えるのは、sts も visitorData も pot も要らないクライアントだけ。
-// どちらも「Made for kids」動画では LOGIN_REQUIRED になるので、両方試して駄目なら
-// popup 側のフォールバック鎖に頼ってもらう。
+// ページ内から使えるのは pot も sts も要らないクライアントだけ。
 const PAGE_CLIENTS = ['android_vr', 'visionos'];
+
+// visitorData が無いと LOGIN_REQUIRED（bot検問）になる。実測では Cookie でも sts でも
+// UA でもなく、この X-Goog-Visitor-Id ヘッダの有無だけで OK と LOGIN_REQUIRED が
+// 切り替わる。isolated world からは ytcfg を読めないが、ページのインライン script の
+// textContent は読めるので、そこから拾う。
+let _visitorData = null;
+
+function visitorData() {
+  if (_visitorData) return _visitorData;
+  for (const script of document.querySelectorAll('script')) {
+    const text = script.textContent || '';
+    if (!text.includes('visitorData')) continue;
+    const m = text.match(/"visitorData":\s*"([^"]+)"/);
+    if (!m) continue;
+    _visitorData = m[1].replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+    return _visitorData;
+  }
+  return null;
+}
 
 async function fetchFormats(videoId) {
   const cfg = CFG();
@@ -105,27 +122,36 @@ async function fetchFormats(videoId) {
     }
   }
 
-  // LOGIN_REQUIRED は「Made for kids だから」ではない。pot を持たないクライアントが
-  // bot 検問に掛かった時にこれが返る。頻度は IP とセッションの状態次第で変わる。
-  // popup は PO Token を生成できるので、そちらなら通ることが多い。
+  // LOGIN_REQUIRED はほぼ visitorData が送れていないことを意味する（実測でそこだけが
+  // OK と LOGIN_REQUIRED を分ける）。取れていない理由を出さないと原因を追えない。
   const blocked = failures.some(f => /LOGIN_REQUIRED/.test(f));
+  if (blocked && !visitorData()) {
+    throw new Error('visitorData をページから取得できず bot検問で弾かれました。ページを再読み込みしてください');
+  }
   throw new Error(blocked
-    ? 'bot検問で弾かれました（pot不要クライアントが使えない状態）。拡張アイコンのパネルから試してください'
+    ? 'bot検問で弾かれました。拡張アイコンのパネルから試してください'
     : failures.join(' / ') || 'フォーマットを取得できません');
 }
 
 async function fetchWithClient(videoId, profile, cfg) {
+  const visitor = visitorData();
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-YouTube-Client-Name': String(cfg.clientNameHeaders[profile.clientName]),
+    'X-YouTube-Client-Version': profile.clientVersion
+  };
+  if (visitor) headers['X-Goog-Visitor-Id'] = visitor;
+
+  const client = { ...profile.contextClient };
+  if (visitor) client.visitorData = visitor;
+
   const resp = await fetch(
     `https://www.youtube.com/youtubei/v1/player?key=${encodeURIComponent(cfg.defaultInnertubeApiKey)}&prettyPrint=false`,
     {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-YouTube-Client-Name': String(cfg.clientNameHeaders[profile.clientName]),
-        'X-YouTube-Client-Version': profile.clientVersion
-      },
+      headers,
       body: JSON.stringify({
-        context: { client: { ...profile.contextClient } },
+        context: { client },
         videoId,
         contentCheckOk: true,
         racyCheckOk: true
