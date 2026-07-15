@@ -85,11 +85,35 @@ function el(tag, props = {}, styles = '') {
 
 const CFG = () => globalThis.OCHA_YTDL_YOUTUBE_CONFIG;
 
+// ページ内から使えるのは、sts も visitorData も pot も要らないクライアントだけ。
+// どちらも「Made for kids」動画では LOGIN_REQUIRED になるので、両方試して駄目なら
+// popup 側のフォールバック鎖に頼ってもらう。
+const PAGE_CLIENTS = ['android_vr', 'visionos'];
+
 async function fetchFormats(videoId) {
   const cfg = CFG();
-  const profile = cfg?.innertubeClientProfiles?.find(p => p.key === 'android_vr');
-  if (!profile) throw new Error('android_vr プロファイルが設定にありません');
+  const failures = [];
 
+  for (const key of PAGE_CLIENTS) {
+    const profile = cfg?.innertubeClientProfiles?.find(p => p.key === key);
+    if (!profile) continue;
+    try {
+      return await fetchWithClient(videoId, profile, cfg);
+    } catch (e) {
+      failures.push(`${key}: ${e.message}`);
+      console.info(`[ytdl] ${key} では取得できず`, e?.message || e);
+    }
+  }
+
+  // 「ログインして bot ではないことを確認してください」をそのまま出しても原因が伝わらない。
+  // 実際には Made for kids 等でこのクライアントが使えないだけで、popup なら取れる。
+  const blocked = failures.some(f => /LOGIN_REQUIRED|ログイン/.test(f));
+  throw new Error(blocked
+    ? 'この動画はページ内からは取得できません（Made for kids 等の制限）。拡張アイコンのパネルから試してください'
+    : failures.join(' / ') || 'フォーマットを取得できません');
+}
+
+async function fetchWithClient(videoId, profile, cfg) {
   const resp = await fetch(
     `https://www.youtube.com/youtubei/v1/player?key=${encodeURIComponent(cfg.defaultInnertubeApiKey)}&prettyPrint=false`,
     {
@@ -110,7 +134,7 @@ async function fetchFormats(videoId) {
   const data = await resp.json();
   const status = data?.playabilityStatus?.status;
   if (status && status !== 'OK') {
-    throw new Error(data.playabilityStatus.reason || status);
+    throw new Error(`${status}: ${data.playabilityStatus.reason || ''}`);
   }
   const sd = data?.streamingData;
   if (!sd) throw new Error('streamingData がありません');
@@ -774,14 +798,32 @@ async function init() {
     state.formats = [];
     await restore();
   }
-  if (!mount()) {
-    // YouTube は SPA なので、行がまだ組み上がっていないことがある
-    const observer = new MutationObserver(() => {
-      if (mount()) observer.disconnect();
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
-    setTimeout(() => observer.disconnect(), 15000);
-  }
+  mount();
+  watchForRemount();
+}
+
+// YouTube はナビゲーション後もアクション行を非同期に作り直すことがあり、その時に
+// 差し込んだ要素ごと巻き添えで消える。一度置いて終わりにすると「リロードしないと
+// ボタンが出ない」状態になるので、消えていたら置き直し続ける。
+let remountObserver = null;
+let remountQueued = false;
+
+function watchForRemount() {
+  if (remountObserver) return;
+  remountObserver = new MutationObserver(() => {
+    // YouTube の DOM 変更は非常に多いので、実際の確認は1回にまとめる。
+    // requestAnimationFrame は使わないこと。裏に回ったタブでは止まるので、
+    // その間にボタンを消されると二度と戻らない（タブは頻繁に裏に回る）。
+    if (remountQueued) return;
+    remountQueued = true;
+    setTimeout(() => {
+      remountQueued = false;
+      if (!currentVideoId()) return;
+      if (document.getElementById(BUTTON_HOST_ID) && document.getElementById(PANEL_HOST_ID)) return;
+      mount();
+    }, 0);
+  });
+  remountObserver.observe(document.body, { childList: true, subtree: true });
 }
 
 document.addEventListener('yt-navigate-finish', init);
