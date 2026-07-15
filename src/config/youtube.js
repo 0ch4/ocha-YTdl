@@ -19,6 +19,26 @@ globalThis.OCHA_YTDL_YOUTUBE_CONFIG = Object.freeze({
   },
   innertubeClientProfiles: [
     {
+      // yt-dlp の第一デフォルト(_DEFAULT_CLIENTS)。直URL/pot不要/JSプレーヤー不要(n,sig無し)。
+      // clientVersion は 1.65 を超えると SABR only が返りうるため 1.65.10 に固定すること。
+      // 「Made for kids」動画はこのクライアントでは取得不可 → 後続へフォールバックする。
+      key: 'android_vr',
+      clientName: 'ANDROID_VR',
+      clientVersion: '1.65.10',
+      contextClient: {
+        clientName: 'ANDROID_VR',
+        clientVersion: '1.65.10',
+        deviceMake: 'Oculus',
+        deviceModel: 'Quest 3',
+        androidSdkVersion: 32,
+        userAgent: 'com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
+        osName: 'Android',
+        osVersion: '12L',
+        hl: 'ja',
+        gl: 'JP'
+      }
+    },
+    {
       key: 'tv',
       clientName: 'TVHTML5',
       clientVersion: '7.20260114.12.00',

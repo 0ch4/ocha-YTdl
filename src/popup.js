@@ -790,9 +790,10 @@ async function fetchInnertubePlayerResponses(videoId, innertube = {}, statusEl =
         resolvable,
         heights: getResolvableRawVideoHeights(response)
       });
-      // tv が解決可能フォーマットを返せば以降のクライアント(ios等は403で無駄)は叩かない＝高速化。
-      // tv が失敗した時だけ後続(tv_downgraded/page_web/...)にフォールバックする。
-      if (resolvable > 0) break;
+      // 先頭クライアントが解決可能な adaptive 映像を返せば以降は叩かない＝高速化。
+      // progressive(itag18 360p)だけを見て打ち切ってはいけない: SABR-only 応答でも
+      // itag18 は生きたまま返るので、それを成功と誤認すると 360p で頭打ちになる。
+      if (hasResolvableAdaptiveVideo(response)) break;
     } catch (e) {
       errors.push(`${client.key}: ${e.message}`);
       debug.errors.push(`${client.key}: ${e.message}`);
@@ -1038,6 +1039,15 @@ function getResolvableRawVideoHeights(response) {
 
 function canResolveRawFormat(fmt) {
   return Boolean(fmt.url || fmt.signatureCipher || fmt.cipher);
+}
+
+// SABR-only 応答の判別に使う。YouTube は adaptiveFormats を url も signatureCipher も無い
+// メタデータだけの形(=serverAbrStreamingUrl 経由でしか再生できない)で返すことがあり、
+// その場合でも progressive の itag18 だけは解決可能なまま返ってくる。
+function hasResolvableAdaptiveVideo(response) {
+  const sd = response?.streamingData;
+  return (sd?.adaptiveFormats ?? []).some(fmt =>
+    canResolveRawFormat(fmt) && (fmt.height || /^video\//.test(fmt.mimeType || '')));
 }
 
 function dedupeRawFormats(formats) {
