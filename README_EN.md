@@ -49,7 +49,11 @@ Shorts work the same way. The **切り出し** (clip) button joins the column of
 
 Pressing it opens the panel in the space beside the video. Marking a range and choosing a quality work exactly as on a watch page.
 
-Narrow the window and YouTube moves that column on top of the video, leaving no room for the panel. The button then saves the current Short at its best mp4 straight away, without a range, and reports progress on its own label.
+Narrow the window and YouTube moves that column on top of the video.
+
+![A Short in a narrow window](docs/images/shorts-narrow.png)
+
+With no room left for the panel, the button saves the current Short at its best mp4 straight away, without a range, and reports progress on its own label.
 
 ## When a video will not load, use the toolbar icon
 
