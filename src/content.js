@@ -174,8 +174,9 @@ async function fetchFormatBytes(fmt, onProgress) {
 
   async function worker() {
     while (next < ranges.length) {
-      const [start, end] = ranges[next++];
-      const part = await fetchChunk(fmt.url, start, end);
+      const i = next++;
+      const [start, end] = ranges[i];
+      const part = await fetchChunk(fmt.url, start, end, `itag${fmt.itag} chunk ${i + 1}/${ranges.length}`);
       out.set(part, start);
       done += part.length;
       if (onProgress) onProgress(done, total);
@@ -190,20 +191,23 @@ async function fetchFormatBytes(fmt, onProgress) {
 // 1チャンクを取る。ぶら下がったまま返らない接続があるので、必ず期限を切って
 // 打ち切り、バックオフして取り直す。これが無いと Promise.all が永久に解決せず、
 // エラーも出さずに進捗が止まったまま固まる。
-async function fetchChunk(url, start, end) {
+async function fetchChunk(url, start, end, tag) {
   const backoffs = [0, 1000, 3000, 7000, 15000];
+  const tried = [];
   let lastError = null;
 
   for (const wait of backoffs) {
     if (wait) await new Promise(r => setTimeout(r, wait));
     const abort = new AbortController();
     const timer = setTimeout(() => abort.abort(), CHUNK_TIMEOUT_MS);
+    const began = Date.now();
     try {
       // 範囲は URL のクエリだけで渡すこと。Range ヘッダと併用すると、クエリで
       // 切られた本体に対してさらにヘッダの範囲が適用され、2チャンク目以降が 416 になる。
       const r = await fetch(rangedUrl(url, start, end), { signal: abort.signal });
       if (r.status !== 200 && r.status !== 206) {
         lastError = new Error(`HTTP ${r.status}`);
+        tried.push(`HTTP ${r.status} (${Date.now() - began}ms)`);
         continue;
       }
       const part = new Uint8Array(await r.arrayBuffer());
@@ -211,16 +215,34 @@ async function fetchChunk(url, start, end) {
       if (part.length !== want) {
         // 短く返ってきた分をそのまま書くと歯抜けのまま完了扱いになる
         lastError = new Error(`応答が短い (${part.length}/${want})`);
+        tried.push(`短い ${part.length}/${want}`);
         continue;
       }
+      if (tried.length) console.info(`[ytdl] ${tag}: ${tried.length}回失敗後に成功`, tried);
       return part;
     } catch (e) {
       lastError = abort.signal.aborted ? new Error('応答がありません（時間切れ）') : e;
+      tried.push(`${e.name}: ${e.message} (${Date.now() - began}ms)`);
     } finally {
       clearTimeout(timer);
     }
   }
-  throw new Error(`ダウンロード失敗: ${lastError?.message || '原因不明'}`);
+
+  // 再現しない不具合を追えるように、諦めた時の状況を全部残す。
+  const detail = {
+    区間: `${start}-${end} (${((end - start + 1) / 1048576).toFixed(1)}MB)`,
+    ホスト: (() => { try { return new URL(url).host; } catch { return '不明'; } })(),
+    残り有効期限: (() => {
+      try {
+        const exp = Number(new URL(url).searchParams.get('expire'));
+        return exp ? `${Math.round(exp - Date.now() / 1000)}秒` : '不明';
+      } catch { return '不明'; }
+    })(),
+    試行: tried,
+    オンライン: navigator.onLine
+  };
+  console.error(`[ytdl] ${tag} を諦めました`, detail);
+  throw new Error(`ダウンロード失敗 (${tag}): ${lastError?.message || '原因不明'} — 詳細はコンソール`);
 }
 
 // ─── 合成（サンドボックス iframe の ffmpeg.wasm）─────────────
