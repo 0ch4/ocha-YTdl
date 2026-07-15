@@ -26,8 +26,14 @@
   "content_scripts": [
     {
       "matches": ["*://www.youtube.com/watch*", "*://www.youtube.com/shorts/*"],
-      "js": ["src/content.js"],
+      "js": ["src/config/youtube.js", "src/content.js"],
       "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["sandbox/muxer.html", "vendor/ffmpeg/ffmpeg-core.wasm"],
+      "matches": ["*://www.youtube.com/*"]
     }
   ],
   "action": {
