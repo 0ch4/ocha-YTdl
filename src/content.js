@@ -37,6 +37,25 @@ function isWatchPage() {
   return new URL(location.href).pathname === '/watch';
 }
 
+function isShortsPage() {
+  return /^\/shorts\//.test(new URL(location.href).pathname);
+}
+
+// Shorts は幅で見た目が変わる。広い時は操作列が動画の右に出て大きな余白が残り、
+// 狭くなると操作列が動画に重なって余白が消える。YouTube の分岐点を数値で写すと
+// 向こうが変えた時に外れるので、**実際に空いている幅を測って**決める。
+const SHORTS_PANEL_MIN_WIDTH = 340;
+
+function shortsLayout() {
+  const bar = document.querySelector('reel-action-bar-view-model');
+  const container = document.querySelector('.ytReelPlayerOverlayViewModelActionsContainer');
+  if (!bar || !container) return null;
+  const b = bar.getBoundingClientRect();
+  const c = container.getBoundingClientRect();
+  const free = Math.round(c.right - b.right);      // 操作列の右に残っている余白
+  return { bar, container, free, roomy: free >= SHORTS_PANEL_MIN_WIDTH };
+}
+
 function videoEl() {
   return document.querySelector('video.html5-main-video') || document.querySelector('video');
 }
@@ -332,6 +351,41 @@ function styleSheet() {
       height: 32px; border-radius: 16px; padding: 0 12px;
       background: transparent; color: ${YT_DIM}; font-size: 13px; font-weight: 400;
     }
+    /* Shorts の操作列の項目。純正から実測: ボタン 48x48 / radius 24px /
+       additive背景 / アイコン24x24 / 下に10pxのラベル、1項目 48x78 の縦積み。 */
+    .reel-item {
+      display: flex; flex-direction: column; align-items: center;
+      width: 48px; cursor: pointer; background: none; border: 0; padding: 0;
+      ${YT_FONT}
+    }
+    .reel-circle {
+      width: 48px; height: 48px; border-radius: 24px;
+      display: flex; align-items: center; justify-content: center;
+      background: ${YT_FILL}; color: ${YT_TEXT};
+      position: relative; overflow: hidden;
+      transition: background-color 0.1s ease;
+    }
+    .reel-item:hover .reel-circle, .reel-item:focus-visible .reel-circle {
+      background: var(--ocha-hover, ${THEME.dark.hover});
+    }
+    .reel-circle::before {
+      content: ""; position: absolute; left: 0; bottom: 50%;
+      width: 100%; height: 100%; border-radius: inherit;
+      background: var(--ocha-wash, ${THEME.dark.wash});
+      filter: blur(10px); pointer-events: none;
+    }
+    .reel-circle::after {
+      content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 0.5px;
+      background: linear-gradient(var(--ocha-rim, ${THEME.dark.rim}), transparent 75%);
+      mask: linear-gradient(#fff 0, #fff 0) content-box exclude,
+            linear-gradient(#fff 0, #fff 0) exclude;
+      pointer-events: none;
+    }
+    .reel-label {
+      font-size: 10px; font-weight: 400; color: ${YT_TEXT};
+      margin-top: 4px; white-space: nowrap;
+    }
+
     /* YouTube は素の select を使わないが、チップに寄せておけば行の中で浮かない */
     .sel {
       ${YT_FONT}
@@ -615,6 +669,40 @@ async function doSave() {
   }
 }
 
+// 狭い Shorts 用。選ばせる場所が無いので、最高画質の mp4 と最高音質で送る。
+// 範囲は指定しようがないので全長。
+async function quickSave(labelEl) {
+  // パネルを開かないので、進捗はボタンのラベルに出すしかない
+  const say = text => { if (labelEl) labelEl.textContent = text; };
+  const restore = () => setTimeout(() => say('切り出し'), 4000);
+  say('準備中');
+  try {
+    const formats = await fetchFormats(state.videoId);
+    const video = formats.filter(f => f.hasVideo && !f.hasAudio)
+      .sort((a, b) => (b.height - a.height) || (a.ext === 'mp4' ? -1 : 1) || (b.bitrate - a.bitrate))[0];
+    const audio = formats.filter(f => f.hasAudio && !f.hasVideo)
+      .sort((a, b) => b.bitrate - a.bitrate)[0];
+    if (!video || !audio) throw new Error('フォーマットが見つかりません');
+
+    const res = await chrome.runtime.sendMessage({
+      type: 'ocha:download',
+      job: {
+        videoTitle: _title || docTitle() || 'video',
+        items: [{ kind: 'mux', video, audio, trim: null }],
+        ctx: { videoId: state.videoId, visitorData: visitorData() },
+        theme: document.documentElement.hasAttribute('dark') ? 'dark' : 'light'
+      }
+    });
+    if (!res?.ok) throw new Error(res?.error || 'ダウンロードを開始できませんでした');
+    say('開始');
+    restore();
+  } catch (err) {
+    say('失敗');
+    restore();
+    console.error('[ytdl] quick save failed:', err);
+  }
+}
+
 async function loadFormats() {
   if (!els) return;
   els.save.disabled = true;
@@ -663,6 +751,71 @@ function unmount() {
 }
 
 function mount() {
+  if (isShortsPage()) return mountShorts();
+  return mountWatch();
+}
+
+// Shorts は操作列が縦で、パネルを置く余白は幅次第。広い時は動画の右に余白が残るので
+// そこへ出し、狭くて操作列が動画に重なる時はボタンだけにする。分岐は実測した余白で決める。
+function mountShorts() {
+  const layout = shortsLayout();
+  if (!layout) return false;
+  if (document.getElementById(BUTTON_HOST_ID) && document.getElementById(PANEL_HOST_ID)) return true;
+  unmount();
+
+  const host = el('div', { id: BUTTON_HOST_ID }, 'display:block;margin-top:16px;');
+  const root = host.attachShadow({ mode: 'open' });
+  hosts.add(host);
+  root.appendChild(styleSheet());
+
+  const item = el('button', { type: 'button', className: 'reel-item' });
+  const circle = el('div', { className: 'reel-circle' });
+  circle.appendChild(cutIcon());
+  item.appendChild(circle);
+  const reelLabel = el('span', { textContent: '切り出し', className: 'reel-label' });
+  item.appendChild(reelLabel);
+  root.appendChild(item);
+  layout.bar.appendChild(host);
+
+  const panel = buildPanel();
+  panel.host.setAttribute('style',
+    'position:absolute;top:50%;transform:translateY(-50%);width:340px;max-width:calc(100% - 72px);left:60px;');
+  layout.container.style.position = layout.container.style.position || 'relative';
+  layout.container.appendChild(panel.host);
+
+  item.addEventListener('click', () => {
+    // 余白が無い幅では、開いても動画を覆うだけなので開かない。取得できたら
+    // そのまま最高画質で送る。判定はその都度やる（幅は変わる）。
+    if (!shortsLayout()?.roomy) {
+      quickSave(reelLabel);
+      return;
+    }
+    state.open = !state.open;
+    render();
+    if (state.open && !state.formats.length) loadFormats();
+  });
+
+  els = {
+    count: el('span'),                    // Shorts のボタンには範囲を出す場所が無い
+    panelHost: panel.host,
+    startValue: panel.startValue,
+    endValue: panel.endValue,
+    note: panel.note,
+    quality: panel.quality,
+    ext: panel.ext,
+    audio: panel.audio,
+    save: panel.save,
+    saveNote: panel.saveNote
+  };
+  els.quality.addEventListener('change', refreshExtOptions);
+  els.save.addEventListener('click', doSave);
+  els.save.disabled = true;
+  applyTheme();
+  render();
+  return true;
+}
+
+function mountWatch() {
   // 差し込み先は watch ページの構造にしか無い。ID の存在だけで判断してはいけない:
   //   - Shorts にも #top-level-buttons-computed があるが、あれは
   //     ytd-shorts-player-controls > #right-controls、つまりプレイヤー右上の
@@ -713,9 +866,15 @@ function mount() {
   return true;
 }
 
+let _lastKind = null;
+
 async function init() {
   const videoId = currentVideoId();
-  if (!videoId) return;
+  if (!videoId) { unmount(); return; }
+
+  // watch と Shorts で差し込み先が違うので、種別が変わったら作り直す
+  const kind = isShortsPage() ? 'shorts' : 'watch';
+  if (kind !== _lastKind) { unmount(); _lastKind = kind; }
   if (videoId !== state.videoId) {
     // 別の動画に移ったら前の範囲は捨てる
     state.videoId = videoId;
@@ -746,9 +905,9 @@ function watchForRemount() {
     remountQueued = true;
     setTimeout(() => {
       remountQueued = false;
-      // watch から Shorts へ移ったら、watch の DOM ごと隠れるだけで自前の要素は
-      // 残る。隠れた場所に居座らせず片付ける。
-      if (!isWatchPage()) { unmount(); return; }
+      // watch と Shorts では差し込み先が別物。ページ種別が変わったら、前の場所に
+      // 居座らせず作り直す（watch の DOM は Shorts でも隠れて残るため）。
+      if (!isWatchPage() && !isShortsPage()) { unmount(); return; }
       if (!currentVideoId()) return;
       if (document.getElementById(BUTTON_HOST_ID) && document.getElementById(PANEL_HOST_ID)) return;
       mount();
