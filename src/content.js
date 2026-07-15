@@ -604,7 +604,10 @@ function renderPicker() {
   fillSelect(els.quality, heights.map(h => {
     const best = state.formats.filter(f => f.hasVideo && !f.hasAudio && f.height === h)
       .sort((a, b) => (b.fps || 0) - (a.fps || 0))[0];
-    return { value: String(h), label: `${h}p` + (best?.fps > 30 ? `${best.fps}` : '') };
+    // 表示は応答の qualityLabel を使う。height から作ると縦動画で破綻する:
+    // Shorts は 1080x1920 なので height は 1920 だが、YouTube は短辺で 1080p と呼ぶ。
+    const label = best?.qualityLabel || `${h}p`;
+    return { value: String(h), label };
   }));
 
   const audios = state.formats.filter(f => f.hasAudio && !f.hasVideo).sort((a, b) => b.bitrate - a.bitrate);

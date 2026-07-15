@@ -41,6 +41,16 @@ Pressing it opens a panel below.
 
 That window is independent of the page, so **moving to another video mid-download does not interrupt it**.
 
+## Shorts
+
+Shorts work the same way. The **切り出し** (clip) button joins the column of actions on the right, under like, share and remix.
+
+![The clip panel on a Short](docs/images/shorts.png)
+
+Pressing it opens the panel in the space beside the video. Marking a range and choosing a quality work exactly as on a watch page.
+
+Narrow the window and YouTube moves that column on top of the video, leaving no room for the panel. The button then saves the current Short at its best mp4 straight away, without a range, and reports progress on its own label.
+
 ## When a video will not load, use the toolbar icon
 
 The in-page panel only uses the clients that need no PO Token and no signature work (`android_vr` and `visionos`). When those are refused for a video, the panel says so.
