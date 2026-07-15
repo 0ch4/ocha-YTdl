@@ -22,7 +22,9 @@ globalThis.OCHA_YTDL_YOUTUBE_CONFIG = Object.freeze({
     {
       // yt-dlp の第一デフォルト(_DEFAULT_CLIENTS)。直URL/pot不要/JSプレーヤー不要(n,sig無し)。
       // clientVersion は 1.65 を超えると SABR only が返りうるため 1.65.10 に固定すること。
-      // 「Made for kids」動画はこのクライアントでは取得不可 → 後続へフォールバックする。
+      // yt-dlp は「Made for kids はこのクライアントで取得不可」と注記しているが、こちらでは
+      // 未確認。過去に LOGIN_REQUIRED を Made for kids と誤って結論づけたことがある。実際の
+      // 原因は X-Goog-Visitor-Id の欠落で、送れば 12/12 通った。同じ間違いをしないこと。
       key: 'android_vr',
       clientName: 'ANDROID_VR',
       clientVersion: '1.65.10',
@@ -42,7 +44,7 @@ globalThis.OCHA_YTDL_YOUTUBE_CONFIG = Object.freeze({
     {
       // android_vr と同じ性質(直URL/pot不要/JSプレーヤー不要)を持つ二枚目のカード。
       // android_vr が塞がれた時の保険として android_vr の直後に置く。
-      // 「Made for kids」動画は android_vr 同様このクライアントでも取得不可。
+      // yt-dlp は android_vr 同様「Made for kids は取得不可」と注記している。こちらでは未確認。
       key: 'visionos',
       clientName: 'VISIONOS',
       clientVersion: '1.02',

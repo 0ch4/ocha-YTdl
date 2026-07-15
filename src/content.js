@@ -91,9 +91,17 @@ function el(tag, props = {}, styles = '') {
 
 // ─── フォーマット取得 ───────────────────────────────────────
 // android_vr は直URLを返し、n も sig も pot も要らない。この content script は
-// www.youtube.com 上で動くので youtubei は同一オリジン、googlevideo も
-// youtube.com オリジンには CORS を許可している。つまりここだけで完結する。
-// sts / visitorData を要する旧クライアントへのフォールバックは popup 側に残してある。
+// www.youtube.com 上で動くので、youtubei への呼び出しは同一オリジンで安全。
+//
+// 【重要】googlevideo は違う。ここには「youtube.com オリジンには CORS を許可して
+// いるので content script だけで完結する」と書いてあったが、それは誤り。許可される
+// のは最初のホストだけで、**GVS は混雑時に予備ホストへリダイレクトし、その先は ACAO
+// を返さない**（URL の mn= に予備ホストが列挙されている）。クロスオリジンのリダイレクト
+// 後は Origin が null 扱いになるため CORS で遮断され、fetch が Failed to fetch になる。
+// 実測ログ: rr3---sn-3pm7dnek → rr1---sn-oguelnlz へのリダイレクトで16チャンク中7個目が失敗。
+// MV3 の content script は host_permissions による CORS 免除を持たないので、ここでは
+// 回避不能。popup が無傷なのは拡張ページで CORS の対象外だから。
+// → googlevideo への fetch は content script から行ってはいけない。
 
 const CFG = () => globalThis.OCHA_YTDL_YOUTUBE_CONFIG;
 
@@ -134,14 +142,15 @@ async function fetchFormats(videoId) {
     }
   }
 
-  // LOGIN_REQUIRED はほぼ visitorData が送れていないことを意味する（実測でそこだけが
-  // OK と LOGIN_REQUIRED を分ける）。取れていない理由を出さないと原因を追えない。
+  // 実測で確定しているのは「visitorData の有無だけが OK と LOGIN_REQUIRED を分ける」
+  // ことだけ(有りで12/12、無しで1/12)。それ以外の原因は特定できていないので、
+  // 分かっていないことを分かったように書かないこと。
   const blocked = failures.some(f => /LOGIN_REQUIRED/.test(f));
   if (blocked && !visitorData()) {
-    throw new Error('visitorData をページから取得できず bot検問で弾かれました。ページを再読み込みしてください');
+    throw new Error('visitorData をページから取得できませんでした。ページを再読み込みしてください');
   }
   throw new Error(blocked
-    ? 'bot検問で弾かれました。拡張アイコンのパネルから試してください'
+    ? `取得を拒否されました（${failures.join(' / ')}）。拡張アイコンのパネルから試してください`
     : failures.join(' / ') || 'フォーマットを取得できません');
 }
 
@@ -745,7 +754,10 @@ async function doSave() {
     const suffix = `_${video.height}p`
       + (trim ? `_${(state.startText || '0:00').replace(/:/g, '')}-${(state.endText || '').replace(/:/g, '')}` : '');
     saveBlob(new Blob([out], { type: 'video/mp4' }), safeFilename(title, suffix, 'mp4'));
-    els.saveNote.textContent = '保存しました';
+    // <a download> は投げっぱなしで完了も失敗も分からない。popup 側は
+    // chrome.downloads.onChanged で実際の完了を見て「保存中断」まで報告できるが、
+    // ここでは何も分からないので、成功したと言い切らないこと。
+    els.saveNote.textContent = 'ブラウザに保存を渡しました';
   } catch (e) {
     els.saveNote.textContent = 'エラー: ' + (e?.message || e);
     console.error('[ytdl] save failed:', e);
