@@ -4,7 +4,7 @@
  */
 globalThis.OCHA_YTDL_YOUTUBE_CONFIG = Object.freeze({
   defaultInnertubeApiKey: 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8',
-  defaultWebClientVersion: '2.20260114.08.00',
+  defaultWebClientVersion: '2.20260708.00.00',
   rangeChunkSize: 10 << 20,
   potProviderUrl: null,
   potFreeSources: ['android_vr', 'tv', 'tv_downgraded'],
@@ -41,11 +41,13 @@ globalThis.OCHA_YTDL_YOUTUBE_CONFIG = Object.freeze({
     {
       key: 'tv',
       clientName: 'TVHTML5',
-      clientVersion: '7.20260114.12.00',
+      clientVersion: '7.20260707.07.00',
       includeVisitorData: true,
       contextClient: {
         clientName: 'TVHTML5',
-        clientVersion: '7.20260114.12.00',
+        clientVersion: '7.20260707.07.00',
+        // See: https://github.com/youtube/cobalt/blob/main/cobalt/browser/user_agent/user_agent_platform_info.cc#L506
+        userAgent: 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/25.lts.30.1034943-gold (unlike Gecko), Unknown_TV_Unknown_0/Unknown (Unknown, Unknown)',
         hl: 'ja',
         gl: 'JP'
       }
@@ -53,11 +55,11 @@ globalThis.OCHA_YTDL_YOUTUBE_CONFIG = Object.freeze({
     {
       key: 'tv_downgraded',
       clientName: 'TVHTML5',
-      clientVersion: '5.20260114',
+      clientVersion: '5.20260707',
       includeVisitorData: true,
       contextClient: {
         clientName: 'TVHTML5',
-        clientVersion: '5.20260114',
+        clientVersion: '5.20260707',
         userAgent: 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version',
         hl: 'ja',
         gl: 'JP'
@@ -72,12 +74,12 @@ globalThis.OCHA_YTDL_YOUTUBE_CONFIG = Object.freeze({
     {
       key: 'android',
       clientName: 'ANDROID',
-      clientVersion: '21.02.35',
+      clientVersion: '21.26.364',
       contextClient: {
         clientName: 'ANDROID',
-        clientVersion: '21.02.35',
+        clientVersion: '21.26.364',
         androidSdkVersion: 30,
-        userAgent: 'com.google.android.youtube/21.02.35 (Linux; U; Android 11) gzip',
+        userAgent: 'com.google.android.youtube/21.26.364 (Linux; U; Android 11) gzip',
         osName: 'Android',
         osVersion: '11',
         hl: 'ja',
@@ -87,13 +89,13 @@ globalThis.OCHA_YTDL_YOUTUBE_CONFIG = Object.freeze({
     {
       key: 'ios',
       clientName: 'IOS',
-      clientVersion: '21.02.3',
+      clientVersion: '21.26.4',
       contextClient: {
         clientName: 'IOS',
-        clientVersion: '21.02.3',
+        clientVersion: '21.26.4',
         deviceMake: 'Apple',
         deviceModel: 'iPhone16,2',
-        userAgent: 'com.google.ios.youtube/21.02.3 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)',
+        userAgent: 'com.google.ios.youtube/21.26.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)',
         osName: 'iPhone',
         osVersion: '18.3.2.22D82',
         hl: 'ja',
