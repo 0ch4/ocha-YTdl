@@ -30,12 +30,6 @@
       "run_at": "document_idle"
     }
   ],
-  "web_accessible_resources": [
-    {
-      "resources": ["sandbox/muxer.html", "vendor/ffmpeg/ffmpeg-core.wasm"],
-      "matches": ["*://www.youtube.com/*"]
-    }
-  ],
   "action": {
     "default_popup": "src/popup.html",
     "default_title": "ocha-YTdl",

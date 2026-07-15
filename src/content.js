@@ -1,6 +1,14 @@
 /*
- * YouTube の視聴ページに切り出し範囲の指定UIを差し込む。
- * 範囲はプレイヤーの再生位置から取るので、popup に時刻を手入力しなくてよくなる。
+ * YouTube の視聴ページに UI を差し込む。ここは画面だけを持つ。
+ *
+ *   このファイルがやること : 範囲指定(再生位置から)、画質選択、ジョブの送出
+ *   このファイルがやらないこと: googlevideo からの取得、合成、保存
+ *
+ * ダウンロード本体は popup.html?job= のワーカーウィンドウが行う。理由は2つ:
+ *   - content script は googlevideo を取得できない(下の fetchFormats 手前の注記参照)
+ *   - popup 側に pot・20MBの壁・バックオフ・保存完了の検知などの知見が既にある
+ * ここに二つ目の実装を作ると、YouTubeが何か変えるたびに二箇所直すことになる。
+ * 一度それをやって、popup が既に知っていたことを4つ踏み直した。繰り返さないこと。
  *
  * 見た目は YouTube 側に合わせる。--yt-spec-* トークンを参照しているので、
  * ライト/ダークの切り替えにも追従する（カスタムプロパティは shadow 境界を越えて継承される）。
@@ -12,7 +20,6 @@
 const BUTTON_HOST_ID = 'ocha-ytdl-action-host';
 const PANEL_HOST_ID = 'ocha-ytdl-panel-host';
 const TRIM_DRAFT_KEY = 'trimDraft';
-const CHUNK_TIMEOUT_MS = 30000;
 
 const state = { videoId: null, startText: null, endText: null, open: false, formats: [] };
 let els = null;
@@ -187,6 +194,11 @@ async function fetchWithClient(videoId, profile, cfg) {
   const sd = data?.streamingData;
   if (!sd) throw new Error('streamingData がありません');
 
+  // ここで組み立てる形は popup.js:349-361 が作るものと同じ契約。ワーカー
+  // (popup.html?job=) の runJobItems → fetchFormatBytes がそのまま消費する。
+  // 特に source は必須: popup.js:358 が isPotFreeSource(source) で potFree を決め、
+  // それが 20MB ガード(popup.js:1739)の分岐になる。source を落とすと pot必須扱いされ、
+  // android_vr 由来なのに 20MB で弾かれる。
   const out = [];
   const take = (list, progressive) => {
     for (const f of list || []) {
@@ -196,10 +208,15 @@ async function fetchWithClient(videoId, profile, cfg) {
       out.push({
         itag: f.itag,
         url: f.url,
+        quality: f.qualityLabel || f.quality || String(f.itag),
+        mimeType: mime,
         ext: /webm/.test(mime) ? 'webm' : /mp4/.test(mime) ? 'mp4' : 'bin',
+        isMuxed: Boolean(progressive && isVideo),
         hasVideo: isVideo,
         // progressive(itag18 等) は video/mp4 だが音声を含む
         hasAudio: !isVideo || progressive,
+        source: profile.key,
+        potFree: (CFG()?.potFreeSources || []).includes(profile.key),
         height: f.height || null,
         fps: f.fps || null,
         bitrate: f.bitrate || 0,
@@ -214,198 +231,6 @@ async function fetchWithClient(videoId, profile, cfg) {
   take(sd.adaptiveFormats, false);
   if (!out.length) throw new Error('取得できるフォーマットがありません');
   return out;
-}
-
-// ─── Range ダウンロード ─────────────────────────────────────
-// 全体を一度に要求せず yt-dlp と同じくチャンクで取る。
-
-function rangedUrl(url, start, end) {
-  const u = new URL(url);
-  u.searchParams.set('range', `${start}-${end}`);
-  return u.toString();
-}
-
-async function fetchFormatBytes(fmt, onProgress) {
-  const total = fmt.contentLength;
-  if (!total) {
-    const r = await fetch(fmt.url);
-    if (r.status !== 200 && r.status !== 206) throw new Error(`ダウンロード失敗 (HTTP ${r.status})`);
-    return new Uint8Array(await r.arrayBuffer());
-  }
-
-  // 全体を1リクエストで要求すると弾かれるので、必ず2つ以上に割る。
-  const chunkSize = Math.min(CFG()?.rangeChunkSize || (10 << 20), Math.max(1, Math.ceil(total / 2)));
-  const ranges = [];
-  for (let start = 0; start < total; start += chunkSize) {
-    ranges.push([start, Math.min(start + chunkSize, total) - 1]);
-  }
-
-  const out = new Uint8Array(total);
-  let done = 0;
-  let next = 0;
-
-  async function worker() {
-    while (next < ranges.length) {
-      const i = next++;
-      const [start, end] = ranges[i];
-      const part = await fetchChunk(fmt.url, start, end, `itag${fmt.itag} chunk ${i + 1}/${ranges.length}`);
-      out.set(part, start);
-      done += part.length;
-      if (onProgress) onProgress(done, total);
-    }
-  }
-
-  await Promise.all(Array.from({ length: Math.min(4, ranges.length) }, worker));
-  if (done !== total) throw new Error(`サイズ不一致: ${done}/${total}`);
-  return out;
-}
-
-// 1チャンクを取る。ぶら下がったまま返らない接続があるので、必ず期限を切って
-// 打ち切り、バックオフして取り直す。これが無いと Promise.all が永久に解決せず、
-// エラーも出さずに進捗が止まったまま固まる。
-async function fetchChunk(url, start, end, tag) {
-  const backoffs = [0, 1000, 3000, 7000, 15000];
-  const tried = [];
-  let lastError = null;
-
-  for (const wait of backoffs) {
-    if (wait) await new Promise(r => setTimeout(r, wait));
-    const abort = new AbortController();
-    const timer = setTimeout(() => abort.abort(), CHUNK_TIMEOUT_MS);
-    const began = Date.now();
-    try {
-      // 範囲は URL のクエリだけで渡すこと。Range ヘッダと併用すると、クエリで
-      // 切られた本体に対してさらにヘッダの範囲が適用され、2チャンク目以降が 416 になる。
-      const r = await fetch(rangedUrl(url, start, end), { signal: abort.signal });
-      if (r.status !== 200 && r.status !== 206) {
-        lastError = new Error(`HTTP ${r.status}`);
-        tried.push(`HTTP ${r.status} (${Date.now() - began}ms)`);
-        continue;
-      }
-      const part = new Uint8Array(await r.arrayBuffer());
-      const want = end - start + 1;
-      if (part.length !== want) {
-        // 短く返ってきた分をそのまま書くと歯抜けのまま完了扱いになる
-        lastError = new Error(`応答が短い (${part.length}/${want})`);
-        tried.push(`短い ${part.length}/${want}`);
-        continue;
-      }
-      if (tried.length) console.info(`[ytdl] ${tag}: ${tried.length}回失敗後に成功`, tried);
-      return part;
-    } catch (e) {
-      lastError = abort.signal.aborted ? new Error('応答がありません（時間切れ）') : e;
-      tried.push(`${e.name}: ${e.message} (${Date.now() - began}ms)`);
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  // 再現しない不具合を追えるように、諦めた時の状況を全部残す。
-  const detail = {
-    区間: `${start}-${end} (${((end - start + 1) / 1048576).toFixed(1)}MB)`,
-    ホスト: (() => { try { return new URL(url).host; } catch { return '不明'; } })(),
-    残り有効期限: (() => {
-      try {
-        const exp = Number(new URL(url).searchParams.get('expire'));
-        return exp ? `${Math.round(exp - Date.now() / 1000)}秒` : '不明';
-      } catch { return '不明'; }
-    })(),
-    試行: tried,
-    オンライン: navigator.onLine
-  };
-  console.error(`[ytdl] ${tag} を諦めました`, detail);
-  throw new Error(`ダウンロード失敗 (${tag}): ${lastError?.message || '原因不明'} — 詳細はコンソール`);
-}
-
-// ─── 合成（サンドボックス iframe の ffmpeg.wasm）─────────────
-// サンドボックスは不透明オリジンなので拡張リソースを自力で取得できない。
-// wasm はこちらで読んで渡す。
-
-let _wasmBinary = null;
-async function getWasmBinary() {
-  if (_wasmBinary) return _wasmBinary;
-  const resp = await fetch(chrome.runtime.getURL('vendor/ffmpeg/ffmpeg-core.wasm'));
-  _wasmBinary = await resp.arrayBuffer();
-  return _wasmBinary;
-}
-
-function muxerIframe() {
-  let frame = document.getElementById('ocha-ytdl-muxer');
-  if (!frame) {
-    frame = el('iframe', { id: 'ocha-ytdl-muxer', src: chrome.runtime.getURL('sandbox/muxer.html') },
-      'display:none;width:0;height:0;border:0;');
-    document.body.appendChild(frame);
-  }
-  return frame;
-}
-
-function muxerHandshake() {
-  const frame = muxerIframe();
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      clearInterval(interval);
-      window.removeEventListener('message', onMsg);
-      reject(new Error('合成サンドボックスの起動に失敗しました'));
-    }, 8000);
-    const interval = setInterval(() => frame.contentWindow?.postMessage({ action: 'ping' }, '*'), 50);
-    function onMsg(e) {
-      if (e.data?.action !== 'pong') return;
-      clearInterval(interval);
-      clearTimeout(timeout);
-      window.removeEventListener('message', onMsg);
-      resolve({ coreReady: !!e.data.coreReady, frame });
-    }
-    window.addEventListener('message', onMsg);
-  });
-}
-
-async function runMuxerTask(buildMessage, transfer, label, onProgress) {
-  const { coreReady, frame } = await muxerHandshake();
-  const wasmBinary = coreReady ? null : await getWasmBinary();
-  const reqId = 'ocha_' + Math.random().toString(36).slice(2, 10);
-
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      window.removeEventListener('message', onMsg);
-      reject(new Error(`${label}がタイムアウトしました（5分）`));
-    }, 300000);
-    function onMsg(e) {
-      const d = e.data;
-      if (!d || d.reqId !== reqId) return;
-      if (d.action === 'muxProgress') {
-        const m = /time=(\S+)/.exec(d.line || '');
-        if (m && onProgress) onProgress(`${label}... ${m[1]}`);
-        return;
-      }
-      if (d.action === 'muxResult') {
-        clearTimeout(timeout);
-        window.removeEventListener('message', onMsg);
-        if (d.success) resolve(new Uint8Array(d.data));
-        else reject(new Error(d.error));
-      }
-    }
-    window.addEventListener('message', onMsg);
-    const msg = buildMessage(reqId);
-    if (wasmBinary) msg.wasmBinary = wasmBinary;   // 転送せずコピー（キャッシュを保つ）
-    frame.contentWindow.postMessage(msg, '*', transfer);
-  });
-}
-
-// ─── 保存 ────────────────────────────────────────────────
-// blob は同一オリジンなので <a download> がそのまま効く。chrome.downloads は要らない。
-// popup と違いページは閉じないので、完了を待つ必要もない。
-
-function saveBlob(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  const a = el('a', { href: url, download: filename }, 'display:none');
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 60000);
-}
-
-function safeFilename(title, suffix, ext) {
-  const base = (title || 'video').replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 120);
-  return `${base}${suffix}.${ext}`;
 }
 
 const YT_TEXT = 'var(--yt-spec-text-primary, #f1f1f1)';
@@ -701,66 +526,53 @@ function renderPicker() {
   els.save.disabled = false;
 }
 
-function humanSize(bytes) {
-  if (!bytes) return '';
-  return (bytes / 1048576).toFixed(1) + 'MB';
-}
 
+// ダウンロード本体はここではやらない。googlevideo は content script からは
+// 取れず(上の注記参照)、popup.html?job= のワーカーが pot・20MBガード・バックオフ・
+// 合成・保存完了の検知まで既に持っている。ここはジョブを投げるだけにする。
+// storage.session は untrusted context からは書けないので、SW に依頼する。
 async function doSave() {
   const video = selectedVideoFormat();
   const audio = selectedAudioFormat();
   if (!video || !audio) { els.saveNote.textContent = 'フォーマットを選んでください'; return; }
 
-  const trim = (() => {
-    const s = parseTimeText(state.startText);
-    const e = parseTimeText(state.endText);
-    if (s == null && e == null) return null;
-    if (s != null && e != null && e <= s) return 'invalid';
-    return {
-      start: formatForFfmpeg(s ?? 0),
-      end: e == null ? null : formatForFfmpeg(e),
-      duration: (s != null && e != null) ? formatForFfmpeg(e - s) : null
-    };
-  })();
-  if (trim === 'invalid') { els.saveNote.textContent = '終了は開始より後にしてください'; return; }
+  const s = parseTimeText(state.startText);
+  const e = parseTimeText(state.endText);
+  if (s != null && e != null && e <= s) { els.saveNote.textContent = '終了は開始より後にしてください'; return; }
+  const trim = (s == null && e == null) ? null : {
+    start: formatForFfmpeg(s ?? 0),
+    end: e == null ? null : formatForFfmpeg(e),
+    duration: (s != null && e != null) ? formatForFfmpeg(e - s) : null,
+    // ファイル名用。ffmpeg 用の 00:00:06 ではなく画面表示の 0:06 を使う
+    startText: state.startText || null,
+    endText: state.endText || null
+  };
 
   els.save.disabled = true;
-  const title = document.title.replace(/\s*-\s*YouTube\s*$/, '');
+  els.saveNote.textContent = '準備中...';
   try {
-    els.saveNote.textContent = '映像を取得中...';
-    const videoBytes = await fetchFormatBytes(video, (got, total) =>
-      els.saveNote.textContent = `映像 ${humanSize(got)}${total ? ' / ' + humanSize(total) : ''}`);
+    // 署名URLは expire を持つ。パネルを開いたまま放置された後でも通るよう、
+    // 投げる直前に取り直す。
+    const fresh = await fetchFormats(state.videoId);
+    const pick = itag => fresh.find(f => f.itag === itag);
+    const v = pick(video.itag) || video;
+    const a = pick(audio.itag) || audio;
 
-    els.saveNote.textContent = '音声を取得中...';
-    const audioBytes = await fetchFormatBytes(audio, (got, total) =>
-      els.saveNote.textContent = `音声 ${humanSize(got)}${total ? ' / ' + humanSize(total) : ''}`);
-
-    els.saveNote.textContent = '合成中...';
-    // muxer は data.trim が falsy だとカット自体を飛ばして全長を返す。切り出しが
-    // 効かない時にここを疑えるよう、送る中身をそのまま残す。
-    console.info('[ytdl] muxへ送るtrim:', trim ? JSON.stringify(trim) : 'なし（全長で出力される）',
-      '画面の指定:', { 開始: state.startText, 終了: state.endText });
-    const out = await runMuxerTask(reqId => {
-      const msg = {
-        action: 'mux', reqId,
-        video: videoBytes.buffer, audio: audioBytes.buffer,
-        videoName: `video.${video.ext}`, audioName: `audio.${audio.ext}`, outName: 'out.mp4'
-      };
-      if (trim) msg.trim = { start: trim.start, end: trim.end, duration: trim.duration };
-      return msg;
-    }, [videoBytes.buffer, audioBytes.buffer], '合成', text => { els.saveNote.textContent = text; });
-
-    // ファイル名は ffmpeg 用の 00:00:06 ではなく画面表示の 0:06 から作る
-    const suffix = `_${video.height}p`
-      + (trim ? `_${(state.startText || '0:00').replace(/:/g, '')}-${(state.endText || '').replace(/:/g, '')}` : '');
-    saveBlob(new Blob([out], { type: 'video/mp4' }), safeFilename(title, suffix, 'mp4'));
-    // <a download> は投げっぱなしで完了も失敗も分からない。popup 側は
-    // chrome.downloads.onChanged で実際の完了を見て「保存中断」まで報告できるが、
-    // ここでは何も分からないので、成功したと言い切らないこと。
-    els.saveNote.textContent = 'ブラウザに保存を渡しました';
-  } catch (e) {
-    els.saveNote.textContent = 'エラー: ' + (e?.message || e);
-    console.error('[ytdl] save failed:', e);
+    const res = await chrome.runtime.sendMessage({
+      type: 'ocha:download',
+      job: {
+        videoTitle: document.title.replace(/\s*-\s*YouTube\s*$/, ''),
+        items: [{ kind: 'mux', video: v, audio: a, trim }],
+        ctx: { videoId: state.videoId, visitorData: visitorData() },
+        // ワーカーは拡張ページなので YouTube のテーマを自力で知れない。ここで渡す。
+        theme: document.documentElement.hasAttribute('dark') ? 'dark' : 'light'
+      }
+    });
+    if (!res?.ok) throw new Error(res?.error || 'ダウンロードを開始できませんでした');
+    els.saveNote.textContent = 'ダウンロードウィンドウで実行中';
+  } catch (err) {
+    els.saveNote.textContent = 'エラー: ' + (err?.message || err);
+    console.error('[ytdl] dispatch failed:', err);
   } finally {
     els.save.disabled = false;
   }

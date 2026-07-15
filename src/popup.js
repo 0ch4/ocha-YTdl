@@ -1484,14 +1484,23 @@ async function runDownloadWorker(jobId) {
   _videoId = job.ctx?.videoId ?? null;
   _visitorData = job.ctx?.visitorData ?? null;
 
-  if (statusEl) statusEl.textContent = `⬇ ${job.videoTitle || 'ダウンロード'}`;
+  // ワーカーは拡張ページなので YouTube の --yt-spec-* も <html dark> も見えない。
+  // どちらのテーマかはページ側が job に入れて渡してくる。
+  if (job.theme) document.documentElement.setAttribute('data-yt-theme', job.theme);
+
+  if (statusEl) statusEl.textContent = job.videoTitle || 'ダウンロード';
   document.title = (job.videoTitle || 'download').slice(0, 60);
+
+  const bar = document.getElementById('job-progress');
+  if (bar) { bar.style.display = 'block'; bar.classList.add('indeterminate'); }
 
   try {
     await runJobItems(job.items, job.videoTitle);
+    if (bar) { bar.classList.remove('indeterminate'); bar.firstElementChild.style.width = '100%'; }
     setMuxProgress('✓ 完了。まもなく閉じます');
     setTimeout(() => window.close(), 2500);
   } catch (e) {
+    if (bar) bar.style.display = 'none';
     clearMuxProgress();
     if (statusEl) statusEl.textContent = '失敗: ' + (e && e.message || e) + '（このウィンドウは自動で閉じます）';
     // 失敗時もウィンドウを放置しない（理由を読めるよう長めの猶予）。手動でも閉じられる。
@@ -1982,6 +1991,23 @@ async function muxAndDownload(video, audio, videoTitle, els, trim = null) {
 function setMuxProgress(text) {
   const el = document.getElementById('mux-progress');
   if (el) { el.textContent = text; el.style.display = 'block'; el.style.color = ''; }
+  syncJobProgress(text);
+}
+
+// 進捗はすべてこの表示を通り、DL中は "NN%" を含む。バーはそれを拾うだけにして、
+// 呼び出し側には手を入れない。割合が出ない工程(合成/保存)は不定形で流す。
+function syncJobProgress(text) {
+  const bar = document.getElementById('job-progress');
+  if (!bar || bar.style.display !== 'block') return;
+  const fill = bar.firstElementChild;
+  const pct = /(\d+)%/.exec(text || '');
+  if (pct) {
+    bar.classList.remove('indeterminate');
+    fill.style.width = `${Math.min(100, Number(pct[1]))}%`;
+  } else {
+    bar.classList.add('indeterminate');
+    fill.style.width = '';
+  }
 }
 
 function clearMuxProgress() {

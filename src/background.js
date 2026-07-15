@@ -58,6 +58,42 @@ chrome.webRequest.onBeforeRequest.addListener(
   ['requestBody']
 );
 
+// ─── ページ内UIからのダウンロード依頼 ────────────────────────────────────────
+// content script は storage.session に書けず(untrusted context)、windows も開けない。
+// また googlevideo は content script からは取得できない(クロスオリジンのリダイレクト先が
+// ACAO を返さず、MV3 の content script には host_permissions による CORS 免除が無い)。
+// なのでページ側は「何を落とすか」だけを送り、実行は従来どおり popup.html?job= の
+// ワーカーウィンドウが担う。tabId はここで sender から取れる。
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type !== 'ocha:download') return;
+
+  (async () => {
+    try {
+      const job = msg.job || {};
+      if (!Array.isArray(job.items) || job.items.length === 0) {
+        throw new Error('ジョブが空です');
+      }
+      job.ctx = { ...(job.ctx || {}), tabId: sender.tab?.id ?? null };
+
+      const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      await chrome.storage.session.set({ ['ochaJob:' + id]: job });
+      await chrome.windows.create({
+        url: chrome.runtime.getURL('src/popup.html') + '?job=' + id,
+        type: 'popup',
+        width: 480,
+        height: 280,
+        focused: true
+      });
+      sendResponse({ ok: true });
+    } catch (e) {
+      console.warn('[ytdl-bg] download dispatch failed:', e);
+      sendResponse({ ok: false, error: String(e?.message || e) });
+    }
+  })();
+
+  return true;   // 非同期で応答する
+});
+
 chrome.runtime.onInstalled.addListener(() => {
   refreshActiveTab();
 });

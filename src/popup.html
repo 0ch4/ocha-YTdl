@@ -26,6 +26,64 @@
       --ease: cubic-bezier(0.32, 0.08, 0.24, 1);
     }
 
+    /* ダウンロード専用ウィンドウ(popup.html?job=)は YouTube から呼ばれるので、
+       呼び出し元のテーマに合わせる。拡張ページからは --yt-spec-* も <html dark> も
+       見えないため、どちらかは job.theme で渡ってきたものを data-yt-theme に載せる。
+       値は実機の YouTube から採取したもの。 */
+    :root[data-yt-theme="dark"] {
+      --bg: #0f0f0f;
+      --surface: #212121;
+      --surface-2: #272727;
+      --surface-3: #303030;
+      --border: #303030;
+      --border-strong: #3f3f3f;
+      --text: #f1f1f1;
+      --muted: #aaa;
+      --dim: #909090;
+      --accent: #3ea6ff;         /* YouTube の call-to-action */
+      --on-accent: #0f0f0f;
+      --ring: 0 0 0 2px rgba(62, 166, 255, 0.32);
+    }
+    :root[data-yt-theme="light"] {
+      --bg: #fff;
+      --surface: #f9f9f9;
+      --surface-2: #f2f2f2;
+      --surface-3: #e5e5e5;
+      --border: #e5e5e5;
+      --border-strong: #ccc;
+      --text: #0f0f0f;
+      --muted: #606060;
+      --dim: #909090;
+      --accent: #065fd4;
+      --on-accent: #fff;
+      --ring: 0 0 0 2px rgba(6, 95, 212, 0.32);
+    }
+
+    /* YouTube 風の進捗バー。ワーカー時だけ出す。 */
+    #job-progress {
+      display: none;
+      height: 4px;
+      border-radius: 2px;
+      background: var(--surface-3);
+      overflow: hidden;
+      margin: 10px 0 8px;
+    }
+    #job-progress > i {
+      display: block;
+      height: 100%;
+      width: 0;
+      background: #f03;                 /* YouTube の赤 */
+      transition: width 0.2s var(--ease);
+    }
+    #job-progress.indeterminate > i {
+      width: 40%;
+      animation: job-slide 1.1s var(--ease) infinite;
+    }
+    @keyframes job-slide {
+      0%   { transform: translateX(-100%); }
+      100% { transform: translateX(350%); }
+    }
+
     *, *::before, *::after { box-sizing: border-box; }
 
     body {
@@ -239,6 +297,7 @@
     <button class="maint-btn" id="reload-extension">再読み込み</button>
   </div>
   <div id="status">読み込み中...</div>
+  <div id="job-progress" aria-hidden="true"><i></i></div>
   <div id="error"></div>
 
   <div id="quality-picker">
