@@ -832,7 +832,12 @@ function mountWatch() {
   const row = document.querySelector('#top-level-buttons-computed');
   const slot = document.querySelector('#middle-row');
   if (!row || !slot) return false;
-  if (!row.offsetParent || !slot.offsetParent) return false;   // 隠れた watch DOM の残骸
+  // 隠れた watch DOM(Shorts が残していくもの)を拒否する。ただし #middle-row 自身の
+  // 可視性で判断してはいけない: 空のとき display:none で、中身が入って初めて表示
+  // される。watch ページの正常な状態がそれなので、器ではなく ytd-watch-flexy が
+  // 生きているかを見る。Shorts ではそれが display:none になる。
+  const flexy = slot.closest('ytd-watch-flexy');
+  if (!row.offsetParent || !flexy || !flexy.offsetParent) return false;
   if (document.getElementById(BUTTON_HOST_ID) && document.getElementById(PANEL_HOST_ID)) return true;
 
   for (const id of [BUTTON_HOST_ID, PANEL_HOST_ID]) {
@@ -846,6 +851,9 @@ function mountWatch() {
   const button = buildButton();
   const panel = buildPanel();
   row.appendChild(button.host);
+  // 空の #middle-row が消えるのは `#middle-row.ytd-watch-metadata:empty { display:none }`
+  // による。子を入れれば自動で表示されるので style は触らないこと。触ると撤去しても
+  // インライン style が残り、空の帯が居座る。
   slot.appendChild(panel.host);
   applyTheme();
 
