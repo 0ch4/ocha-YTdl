@@ -221,6 +221,12 @@ async function readBundledConfig() {
   return config;
 }
 
+// yt-dlp のキーと、うちの config のキーが名前として一致しない対応。
+// 'web' は page_web(usePageContext: true, defaultClientName: 'WEB') が実体として担っている
+// (contextはページの ytcfg から取得、版は defaultWebClientVersion で追従)。名前だけ見て
+// 「未同梱」と誤判定しないよう、比較前に読み替える。
+const UPSTREAM_KEY_TO_BUNDLED_KEY = { web: 'page_web' };
+
 function diffClients(config, upstreamClients, defaultClients) {
   const drift = [];
   const bundledKeys = new Set(config.innertubeClientProfiles.map(profile => profile.key));
@@ -241,9 +247,22 @@ function diffClients(config, upstreamClients, defaultClients) {
     }
   }
 
+  // page_web が担う 'web' は defaultWebClientVersion で追従しているので、そちらと突き合わせる。
+  const webUpstream = upstreamClients.get('web');
+  if (webUpstream && config.defaultWebClientVersion && config.defaultWebClientVersion !== webUpstream.clientVersion) {
+    drift.push({
+      client: 'page_web',
+      bundled: config.defaultWebClientVersion,
+      upstream: webUpstream.clientVersion,
+      summaryJa: `page_web(defaultWebClientVersion) ${config.defaultWebClientVersion} → ${webUpstream.clientVersion}`,
+      summaryEn: `page_web(defaultWebClientVersion) ${config.defaultWebClientVersion} -> ${webUpstream.clientVersion}`,
+    });
+  }
+
   // 上流が既定にしているクライアントを丸ごと積み忘れている場合(android_vr がこれだった)
   for (const key of defaultClients) {
-    if (bundledKeys.has(key)) continue;
+    const bundledKey = UPSTREAM_KEY_TO_BUNDLED_KEY[key] || key;
+    if (bundledKeys.has(bundledKey)) continue;
     drift.push({
       client: key,
       bundled: null,

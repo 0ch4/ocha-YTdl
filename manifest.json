@@ -11,6 +11,7 @@
   },
   "permissions": [
     "activeTab",
+    "alarms",
     "downloads",
     "scripting",
     "storage",
@@ -26,7 +27,7 @@
   "content_scripts": [
     {
       "matches": ["*://www.youtube.com/watch*", "*://www.youtube.com/shorts/*"],
-      "js": ["src/config/youtube.js", "src/content.js"],
+      "js": ["src/config/youtube.js", "src/shared/maintenance.js", "src/content.js"],
       "run_at": "document_idle"
     }
   ],

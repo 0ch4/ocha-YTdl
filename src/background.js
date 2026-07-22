@@ -1,3 +1,28 @@
+importScripts('shared/maintenance.js');
+
+// ─── 更新推奨ステータスの定期チェック ────────────────────────────────────────
+// popup を開かない人でもページ内UI(content.js)の切り出しボタンで気づけるように、
+// popup を開いた時だけでなくここでも定期的に確認して chrome.storage.local に置く。
+// content.js はそれを読むだけ(自前で fetch はしない)。
+const MAINTENANCE_ALARM = 'ocha-maintenance-check';
+
+async function refreshMaintenanceNotice() {
+  try {
+    await OchaMaintenance.refreshNotice();
+  } catch (e) {
+    console.info('[ytdl-bg] Maintenance status check skipped:', e?.message || e);
+  }
+}
+
+chrome.alarms.create(MAINTENANCE_ALARM, { periodInMinutes: 360 });
+chrome.alarms.onAlarm.addListener(alarm => {
+  if (alarm.name === MAINTENANCE_ALARM) refreshMaintenanceNotice();
+});
+
+// content.js は raw.githubusercontent.com への host_permissions を持つ同じ拡張の一部なので、
+// キャッシュが無い(インストール直後で alarm 未発火)場合は OchaMaintenance.refreshNotice() を
+// 直接呼べる。ここへメッセージを中継する必要はない。
+
 // ─── PO Token capture ────────────────────────────────────────────────────────
 // YouTube の動画再生は googlevideo へのリクエストに &pot=<PO Token> を付ける。
 // PO Token 無しだと adaptive ストリームは先頭~20MB しか落とせない(403)。
@@ -96,10 +121,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 chrome.runtime.onInstalled.addListener(() => {
   refreshActiveTab();
+  refreshMaintenanceNotice();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   refreshActiveTab();
+  refreshMaintenanceNotice();
 });
 
 chrome.tabs.onActivated.addListener(({ tabId }) => {

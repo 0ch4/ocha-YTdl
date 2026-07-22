@@ -3,9 +3,7 @@ const DEFAULT_INNERTUBE_API_KEY = YOUTUBE_CONFIG.defaultInnertubeApiKey || 'AIza
 const DEFAULT_WEB_CLIENT_VERSION = YOUTUBE_CONFIG.defaultWebClientVersion || '2.20260114.08.00';
 const RANGE_CHUNK_SIZE = YOUTUBE_CONFIG.rangeChunkSize || (10 << 20); // 10MB — matches yt-dlp's CHUNK_SIZE
 const MUX_SOFT_LIMIT = 1100 * 1024 * 1024; // ~1.1GB 超: ffmpeg.wasm(wasm32)がヒープ確保に失敗(OOM)しやすい目安
-const MAINTENANCE_STATUS_URL = 'https://raw.githubusercontent.com/0ch4/ocha-YTdl/main/docs/compat/latest.json';
-const MAINTENANCE_STATUS_CACHE_MS = 24 * 60 * 60 * 1000;
-const UPDATE_GUIDE_URL = 'https://github.com/0ch4/ocha-YTdl/blob/main/docs/UPDATE_JA.md';
+const UPDATE_GUIDE_URL = OchaMaintenance.UPDATE_GUIDE_URL;
 
 document.addEventListener('DOMContentLoaded', async () => {
   // ?job=ID で開かれた場合は「ダウンロード専用ウィンドウ」として動作し、
@@ -563,9 +561,9 @@ function formatDurationLabel(seconds, isLive = false) {
 async function checkMaintenanceStatus(el, actionsEl, pillEl) {
   if (!el && !pillEl) return;
 
-  const bundled = await fetchJson(chrome.runtime.getURL('src/generated/ytdlp-meta.json'));
-  const latest = await getLatestMaintenanceStatus();
-  const notice = buildMaintenanceNotice(bundled, latest);
+  const bundled = await OchaMaintenance.fetchJson(chrome.runtime.getURL('src/generated/ytdlp-meta.json'));
+  const latest = await OchaMaintenance.getLatestStatus();
+  const notice = OchaMaintenance.buildNotice(bundled, latest, chrome.runtime.getManifest().version);
   if (!notice) {
     setMaintenancePill(pillEl, 'latest', '最新', '同梱ロジックは最新互換性メタと同期しています');
     return;
@@ -586,83 +584,6 @@ function setMaintenancePill(el, state, text, title = '') {
   el.className = `maint-pill maint-${state}`;
   el.title = title;
   if (textEl) textEl.textContent = text;
-}
-
-async function getLatestMaintenanceStatus() {
-  const cacheKey = 'maintenanceStatusCache';
-  try {
-    const cached = await chrome.storage.local.get(cacheKey);
-    const entry = cached?.[cacheKey];
-    if (entry?.fetchedAt && entry?.data && Date.now() - entry.fetchedAt < MAINTENANCE_STATUS_CACHE_MS) {
-      return entry.data;
-    }
-  } catch (_) {}
-
-  const latest = await fetchJson(MAINTENANCE_STATUS_URL, { cache: 'no-store' });
-  if (latest?.schemaVersion !== 1) {
-    throw new Error('invalid maintenance status schema');
-  }
-
-  try {
-    await chrome.storage.local.set({ [cacheKey]: { fetchedAt: Date.now(), data: latest } });
-  } catch (_) {}
-
-  return latest;
-}
-
-async function fetchJson(url, options = {}) {
-  const resp = await fetch(url, options);
-  if (!resp.ok) throw new Error(`fetch failed: ${resp.status}`);
-  return resp.json();
-}
-
-function buildMaintenanceNotice(bundled, latest) {
-  if (!bundled || !latest) return null;
-
-  const currentVersion = chrome.runtime.getManifest().version;
-  const min = latest.minimumRecommended || {};
-  const reasons = [];
-
-  if (latest.latestExtensionVersion && compareVersionText(latest.latestExtensionVersion, currentVersion) > 0) {
-    reasons.push(`拡張 v${latest.latestExtensionVersion} が利用可能です`);
-  }
-  if (min.ytDlpRelease && compareVersionText(min.ytDlpRelease, bundled.ytDlpRelease) > 0) {
-    reasons.push(`yt-dlp互換性メタ: ${bundled.ytDlpRelease || 'unknown'} → ${min.ytDlpRelease}`);
-  }
-  if (min.ejsVersion && compareVersionText(min.ejsVersion, bundled.ejsVersion) > 0) {
-    reasons.push(`EJS solver: ${bundled.ejsVersion || 'unknown'} → ${min.ejsVersion}`);
-  }
-
-  const severity = latest.severity || (reasons.length ? 'recommended' : 'ok');
-  if (severity === 'ok' && reasons.length === 0) return null;
-
-  const className = severity === 'critical'
-    ? 'maint-critical'
-    : severity === 'info' ? 'maint-info' : 'maint-warn';
-  const title = severity === 'critical' ? '更新が必要です' : severity === 'info' ? 'お知らせ' : '更新を推奨します';
-  const pillState = severity === 'critical' ? 'required' : severity === 'info' ? 'latest' : 'recommended';
-  const pillText = severity === 'critical' ? '要更新' : severity === 'info' ? '情報' : '更新推奨';
-  const syncedMessage = '現在の同梱ロジックは最新互換性メタと同期しています。';
-  const message = latest.messageJa && latest.messageJa !== syncedMessage ? latest.messageJa : null;
-
-  return {
-    className,
-    pillState,
-    pillText,
-    text: [title, ...(message ? [message] : []), ...reasons].join('\n')
-  };
-}
-
-function compareVersionText(a, b) {
-  const pa = String(a || '').match(/\d+/g)?.map(Number) || [];
-  const pb = String(b || '').match(/\d+/g)?.map(Number) || [];
-  const len = Math.max(pa.length, pb.length);
-  for (let i = 0; i < len; i++) {
-    const av = pa[i] || 0;
-    const bv = pb[i] || 0;
-    if (av !== bv) return av > bv ? 1 : -1;
-  }
-  return 0;
 }
 
 function extractYtcfgData(text) {

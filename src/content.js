@@ -24,6 +24,18 @@ const TRIM_DRAFT_KEY = 'trimDraft';
 const state = { videoId: null, startText: null, endText: null, open: false, formats: [] };
 let els = null;
 
+// ─── 更新推奨ステータス ─────────────────────────────────────────
+// popup を開かない人でも気づけるように、切り出しボタンに小さな点を出す。
+// 取得・判定は src/shared/maintenance.js に一本化(popup/background と共有)。
+// ここでは background が定期チェックで置いたキャッシュを読むだけ(自前fetchは保険のみ)。
+// undefined=未取得, null=同期済み(表示なし), object=通知あり。
+let _maintenanceNotice = undefined;
+const MAINTENANCE_DOT_COLOR = {
+  critical: '#cf8b7e',    // popup --err と同じ(茶系のテラコッタ赤)
+  recommended: '#C9B47A', // popup --gold と同じ
+  info: '#8FB37C'         // 玉露グリーン
+};
+
 function currentVideoId() {
   const url = new URL(location.href);
   if (url.pathname === '/watch') return url.searchParams.get('v');
@@ -321,6 +333,58 @@ function applyTheme() {
 new MutationObserver(applyTheme)
   .observe(document.documentElement, { attributes: true, attributeFilter: ['dark'] });
 
+// 点は host(shadow root)側に都度探しに行く。専用の Set で参照を持ち回らないのは、
+// SPA 再遷移で unmount → 再 mount を繰り返すたびに古い(既に外れた)要素の参照が
+// 溜まっていくのを避けるため。hosts は mount/unmount が既に正しく管理している。
+function applyMaintenanceNotice() {
+  const notice = _maintenanceNotice;
+  for (const host of hosts) {
+    const dot = host.shadowRoot?.querySelector('.maint-dot');
+    if (!dot) continue;
+    if (notice) {
+      dot.style.display = 'inline-block';
+      dot.style.backgroundColor = MAINTENANCE_DOT_COLOR[notice.severity] || MAINTENANCE_DOT_COLOR.recommended;
+      dot.title = notice.text;
+    } else {
+      dot.style.display = 'none';
+      dot.title = '';
+    }
+  }
+}
+
+function buildMaintenanceDot(styles) {
+  const dot = el('span', { className: 'maint-dot' },
+    `display:none;width:6px;height:6px;border-radius:50%;cursor:pointer;${styles || ''}`);
+  dot.addEventListener('click', e => {
+    e.stopPropagation();
+    window.open(OchaMaintenance.UPDATE_GUIDE_URL, '_blank', 'noopener');
+  });
+  return dot;
+}
+
+async function loadMaintenanceNotice() {
+  try {
+    let notice = await OchaMaintenance.getCachedNotice();
+    if (notice === undefined) {
+      // インストール直後などまだ background の定期チェック(alarm)が一度も走って
+      // いない場合の保険。以後は alarm 任せにし、ページ読み込みのたびには叩かない。
+      notice = await OchaMaintenance.refreshNotice().catch(() => null);
+    }
+    _maintenanceNotice = notice || null;
+  } catch (_) {
+    _maintenanceNotice = null;
+  }
+  applyMaintenanceNotice();
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !changes[OchaMaintenance.NOTICE_CACHE_KEY]) return;
+  _maintenanceNotice = changes[OchaMaintenance.NOTICE_CACHE_KEY].newValue?.notice || null;
+  applyMaintenanceNotice();
+});
+
+loadMaintenanceNotice();
+
 function styleSheet() {
   // :hover は style 属性では表現できないので shadow root に <style> を持たせる。
   // textContent は TrustedHTML のシンクではないため Trusted Types に抵触しない。
@@ -475,6 +539,8 @@ function buildButton() {
   });
   button.appendChild(count);
   root.appendChild(button);
+  root.appendChild(buildMaintenanceDot('margin-left:8px;'));
+  applyMaintenanceNotice();
   return { host, button, count };
 }
 
@@ -777,7 +843,10 @@ function mountShorts() {
   item.appendChild(circle);
   const reelLabel = el('span', { textContent: '切り出し', className: 'reel-label' });
   item.appendChild(reelLabel);
+  item.style.position = 'relative';
+  item.appendChild(buildMaintenanceDot('position:absolute;top:2px;right:2px;'));
   root.appendChild(item);
+  applyMaintenanceNotice();
   layout.bar.appendChild(host);
 
   const panel = buildPanel();
@@ -903,6 +972,15 @@ async function init() {
 // YouTube はナビゲーション後もアクション行を非同期に作り直すことがあり、その時に
 // 差し込んだ要素ごと巻き添えで消える。一度置いて終わりにすると「リロードしないと
 // ボタンが出ない」状態になるので、消えていたら置き直し続ける。
+function ensureMounted() {
+  // watch と Shorts では差し込み先が別物。ページ種別が変わったら、前の場所に
+  // 居座らせず作り直す（watch の DOM は Shorts でも隠れて残るため）。
+  if (!isWatchPage() && !isShortsPage()) { unmount(); return; }
+  if (!currentVideoId()) return;
+  if (document.getElementById(BUTTON_HOST_ID) && document.getElementById(PANEL_HOST_ID)) return;
+  mount();
+}
+
 let remountObserver = null;
 let remountQueued = false;
 
@@ -916,15 +994,17 @@ function watchForRemount() {
     remountQueued = true;
     setTimeout(() => {
       remountQueued = false;
-      // watch と Shorts では差し込み先が別物。ページ種別が変わったら、前の場所に
-      // 居座らせず作り直す（watch の DOM は Shorts でも隠れて残るため）。
-      if (!isWatchPage() && !isShortsPage()) { unmount(); return; }
-      if (!currentVideoId()) return;
-      if (document.getElementById(BUTTON_HOST_ID) && document.getElementById(PANEL_HOST_ID)) return;
-      mount();
+      ensureMounted();
     }, 0);
   });
   remountObserver.observe(document.body, { childList: true, subtree: true });
+
+  // 保険: yt-navigate-finish の取りこぼしや、監視対象外のタイミングでの差し込みなど、
+  // MutationObserver 単独では拾えないケースがある(shorts/watch どちらでも実際に発生し、
+  // リロードするまでボタンが出ない報告があった)。原因を1つに絞れないので、低頻度の
+  // ポーリングを平行して走らせて必ず自己修復させる。observe 同様、一度始めたら
+  // ページが生きている限り回し続けて構わない(ensureMounted は既に何度呼んでも安全)。
+  setInterval(ensureMounted, 1500);
 }
 
 document.addEventListener('yt-navigate-finish', init);
