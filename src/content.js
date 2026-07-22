@@ -828,12 +828,22 @@ function mount() {
   return mountWatch();
 }
 
+// 「存在する」と「実際に表示されている」は別。YouTube側の遷移中にホストだけが
+// 非表示の親に取り残されると、存在チェックだけでは永久に気づけない
+// (中身を作り直しても同じ非表示の親に置くだけで意味が無いため)。
+// isConnected は詳細度チェック用、offsetParent は非表示(display:none 系)の検出用。
+function isMounted() {
+  const button = document.getElementById(BUTTON_HOST_ID);
+  const panel = document.getElementById(PANEL_HOST_ID);
+  return !!(button && panel && button.isConnected && button.offsetParent);
+}
+
 // Shorts は操作列が縦で、パネルを置く余白は幅次第。広い時は動画の右に余白が残るので
 // そこへ出し、狭くて操作列が動画に重なる時はボタンだけにする。分岐は実測した余白で決める。
 function mountShorts() {
   const layout = shortsLayout();
   if (!layout) return false;
-  if (document.getElementById(BUTTON_HOST_ID) && document.getElementById(PANEL_HOST_ID)) return true;
+  if (isMounted()) return true;
   unmount();
 
   const host = el('div', { id: BUTTON_HOST_ID }, 'display:block;margin-top:16px;');
@@ -911,7 +921,7 @@ function mountWatch() {
   // 生きているかを見る。Shorts ではそれが display:none になる。
   const flexy = slot.closest('ytd-watch-flexy');
   if (!row.offsetParent || !flexy || !flexy.offsetParent) return false;
-  if (document.getElementById(BUTTON_HOST_ID) && document.getElementById(PANEL_HOST_ID)) return true;
+  if (isMounted()) return true;
 
   for (const id of [BUTTON_HOST_ID, PANEL_HOST_ID]) {
     const stale = document.getElementById(id);
@@ -981,7 +991,7 @@ function ensureMounted() {
   // 居座らせず作り直す（watch の DOM は Shorts でも隠れて残るため）。
   if (!isWatchPage() && !isShortsPage()) { unmount(); return; }
   if (!currentVideoId()) return;
-  if (document.getElementById(BUTTON_HOST_ID) && document.getElementById(PANEL_HOST_ID)) return;
+  if (isMounted()) return;
   mount();
 }
 
@@ -1001,14 +1011,21 @@ function watchForRemount() {
       ensureMounted();
     }, 0);
   });
-  remountObserver.observe(document.body, { childList: true, subtree: true });
+  // attributes も見る: 親要素の display/hidden がクラスやインラインstyleの変更だけで
+  // 切り替わるケース(childList を伴わない)は childList 監視だけでは拾えない。
+  remountObserver.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['style', 'hidden', 'class']
+  });
 
   // 保険: yt-navigate-finish の取りこぼしや、監視対象外のタイミングでの差し込みなど、
   // MutationObserver 単独では拾えないケースがある(shorts/watch どちらでも実際に発生し、
   // リロードするまでボタンが出ない報告があった)。原因を1つに絞れないので、低頻度の
   // ポーリングを平行して走らせて必ず自己修復させる。observe 同様、一度始めたら
   // ページが生きている限り回し続けて構わない(ensureMounted は既に何度呼んでも安全)。
-  setInterval(ensureMounted, 1500);
+  setInterval(ensureMounted, 800);
 }
 
 document.addEventListener('yt-navigate-finish', init);
