@@ -699,13 +699,17 @@ async function doSave() {
   const s = parseTimeText(state.startText);
   const e = parseTimeText(state.endText);
   if (s != null && e != null && e <= s) { els.saveNote.textContent = '終了は開始より後にしてください'; return; }
+  // popup.js 側の契約(readTrimInputs/muxStreams/trimSuffix)と同じ形にすること:
+  // start/end は生の秒数(ファイル名生成の formatSecondsForFilename が算術する)、
+  // startText/durationText が ffmpeg の -ss/-t にそのまま渡る "00:00:06" 形式の文字列。
+  // 以前はここが逆(start に文字列、duration というキー名)になっていて、
+  // ファイル名が NaN-NaN-... になり、かつ -t が渡らず終了位置が無視されていた。
   const trim = (s == null && e == null) ? null : {
-    start: formatForFfmpeg(s ?? 0),
-    end: e == null ? null : formatForFfmpeg(e),
-    duration: (s != null && e != null) ? formatForFfmpeg(e - s) : null,
-    // ファイル名用。ffmpeg 用の 00:00:06 ではなく画面表示の 0:06 を使う
-    startText: state.startText || null,
-    endText: state.endText || null
+    start: s ?? 0,
+    end: e,
+    startText: formatForFfmpeg(s ?? 0),
+    endText: e == null ? null : formatForFfmpeg(e),
+    durationText: (s != null && e != null) ? formatForFfmpeg(e - s) : null
   };
 
   els.save.disabled = true;
