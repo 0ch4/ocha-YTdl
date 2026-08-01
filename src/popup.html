@@ -4,33 +4,11 @@
   <meta charset="utf-8">
   <title>ocha-YTdl</title>
   <style>
-    /* 玉露(gyokuro)ダークパレット — ocha-server のデザイントークンを流用 */
-    :root {
-      --bg: #1B1E1A;
-      --surface: #252925;
-      --surface-2: #2D322D;
-      --surface-3: #353b34;
-      --border: #333a30;
-      --border-strong: #454d40;
-      --text: #E8E2D5;
-      --muted: #A19B8E;
-      --dim: #948C7E;
-      --accent: #8FB37C;        /* 玉露グリーン: 主要アクション/リンク */
-      --accent-soft: #9dc189;
-      --accent-deep: #5E8048;   /* ボーダー/装飾 */
-      --gold: #C9B47A;          /* ごく稀な差し色 */
-      --err: #cf8b7e;           /* 茶系に馴染む控えめなテラコッタ赤 */
-      --on-accent: #181c14;     /* グリーン面上の文字 */
-      --r: 11px; --r-md: 8px; --r-sm: 6px;
-      --ring: 0 0 0 2px rgba(143, 179, 124, 0.32);
-      --ease: cubic-bezier(0.32, 0.08, 0.24, 1);
-    }
-
-    /* ダウンロード専用ウィンドウ(popup.html?job=)は YouTube から呼ばれるので、
-       呼び出し元のテーマに合わせる。拡張ページからは --yt-spec-* も <html dark> も
-       見えないため、どちらかは job.theme で渡ってきたものを data-yt-theme に載せる。
+    /* 既定は YouTube ダーク。この popup は YouTube ページ上で開くことが前提の最終
+       フォールバックなので、ツールバーから開いた時もページに合わせるために
+       popup.js が active tab の <html dark> を検出して data-yt-theme を載せる。
        値は実機の YouTube から採取したもの。 */
-    :root[data-yt-theme="dark"] {
+    :root, :root[data-yt-theme="dark"] {
       --bg: #0f0f0f;
       --surface: #212121;
       --surface-2: #272727;
@@ -41,8 +19,14 @@
       --muted: #aaa;
       --dim: #909090;
       --accent: #3ea6ff;         /* YouTube の call-to-action */
+      --accent-soft: #6ac1ff;
+      --accent-deep: #2b8ff0;
+      --gold: #fbc02d;
+      --err: #ff4e45;
       --on-accent: #0f0f0f;
+      --r: 11px; --r-md: 8px; --r-sm: 6px;
       --ring: 0 0 0 2px rgba(62, 166, 255, 0.32);
+      --ease: cubic-bezier(0.32, 0.08, 0.24, 1);
     }
     :root[data-yt-theme="light"] {
       --bg: #fff;
@@ -55,8 +39,14 @@
       --muted: #606060;
       --dim: #909090;
       --accent: #065fd4;
+      --accent-soft: #2f7bd4;
+      --accent-deep: #0b52a6;
+      --gold: #b38600;
+      --err: #d93025;
       --on-accent: #fff;
+      --r: 11px; --r-md: 8px; --r-sm: 6px;
       --ring: 0 0 0 2px rgba(6, 95, 212, 0.32);
+      --ease: cubic-bezier(0.32, 0.08, 0.24, 1);
     }
 
     /* ダウンロード専用ウィンドウ。進捗バーと処理名だけを見せる。 */

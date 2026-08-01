@@ -63,6 +63,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  // ツールバーから開いた popup も、開いている YouTube ページのテーマに合わせる
+  // （ワーカーウィンドウは job.theme で同じ data-yt-theme を受け取る）。
+  await applyYtThemeFromTab(tab);
   const videoId = extractYouTubeVideoId(tab?.url);
   const isShorts = isShortsUrl(tab?.url);
   _tabId = tab?.id ?? null; // PO Token をページMAIN worldで生成するのに使う
@@ -420,6 +423,27 @@ function isYoutubeUrl(url) {
     return hostname === 'youtube.com' || hostname.endsWith('.youtube.com');
   } catch (_) {
     return false;
+  }
+}
+
+// ツールバーから開いた popup の見た目を、開いている YouTube ページのテーマに合わせる。
+// 拡張ページからは <html dark> も --yt-spec-* も見えないので、ページの MAIN world で
+// 判定して data-yt-theme に載せる（値は popup.html 側のライト/ダークトークンに対応）。
+// 検出に失敗したら既定(ダーク)のまま。ワーカーウィンドウはここではなく job.theme を使う。
+async function applyYtThemeFromTab(tab) {
+  try {
+    if (!tab?.id || !isYoutubeUrl(tab.url)) return;
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      world: 'MAIN',
+      func: () => document.documentElement.hasAttribute('dark') ? 'dark' : 'light'
+    });
+    const theme = results?.[0]?.result;
+    if (theme === 'dark' || theme === 'light') {
+      document.documentElement.setAttribute('data-yt-theme', theme);
+    }
+  } catch (_) {
+    // 権限やタブの状態で失敗しても、既定(ダーク)で表示すれば害はない
   }
 }
 
@@ -1711,8 +1735,10 @@ async function fetchFormatBytes(fmt, onProgress) {
 
 async function fetchRange(url, start, end, fmt) {
   const backoffs = [0, 1000, 3000, 7000, 15000]; // 各試行前の待機(ms)
+  const MAX_POT_RETRIES = 2; // pot生成での同一チャンク再試行は高々これだけ（無限ループ防止）
   let lastStatus = 0;
   let triedPot = false;
+  let potRetries = 0;
 
   for (let attempt = 0; attempt < backoffs.length; attempt++) {
     if (backoffs[attempt]) await delay(backoffs[attempt]);
@@ -1738,7 +1764,8 @@ async function fetchRange(url, start, end, fmt) {
       setMuxProgress('PO Tokenを生成中...');
       await ensurePot();
       clearMuxProgress();
-      if (_pot) { attempt--; continue; } // potを付けてこのチャンクを再試行（試行数は消費しない）
+      // pot生成に失敗したまま(_pot===null)でも、potRetries上限を超えたら再試行を打ち切る
+      if (_pot && potRetries < MAX_POT_RETRIES) { potRetries++; attempt--; continue; }
     }
 
     if (r.status !== 403 && r.status !== 429 && r.status < 500) break; // 恒久的エラーは即中断
@@ -2006,26 +2033,41 @@ function buildItem(fmt, videoTitle) {
   const li = document.createElement('li');
   li.className = 'fmt-item';
 
-  const meta = buildMeta(fmt);
-  li.innerHTML = `
-    <div class="fmt-left">
-      <span class="fmt-quality">${fmt.quality}</span>
-      <span class="fmt-meta">${meta}</span>
-    </div>
-    <div class="fmt-actions">
-      <button class="copy-btn" title="URLをコピー">コピー</button>
-      <button class="dl-btn">DL</button>
-    </div>
-  `;
+  const left = document.createElement('div');
+  left.className = 'fmt-left';
 
-  li.querySelector('.copy-btn').addEventListener('click', async () => {
+  const qualityEl = document.createElement('span');
+  qualityEl.className = 'fmt-quality';
+  qualityEl.textContent = fmt.quality;
+
+  const metaEl = document.createElement('span');
+  metaEl.className = 'fmt-meta';
+  metaEl.textContent = buildMeta(fmt);
+
+  left.append(qualityEl, metaEl);
+
+  const actions = document.createElement('div');
+  actions.className = 'fmt-actions';
+
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'copy-btn';
+  copyBtn.title = 'URLをコピー';
+  copyBtn.textContent = 'コピー';
+
+  const dlBtn = document.createElement('button');
+  dlBtn.className = 'dl-btn';
+  dlBtn.textContent = 'DL';
+
+  actions.append(copyBtn, dlBtn);
+  li.append(left, actions);
+
+  copyBtn.addEventListener('click', async () => {
     await navigator.clipboard.writeText(fmt.url);
-    const btn = li.querySelector('.copy-btn');
-    btn.textContent = '✓';
-    setTimeout(() => { btn.textContent = 'コピー'; }, 1500);
+    copyBtn.textContent = '✓';
+    setTimeout(() => { copyBtn.textContent = 'コピー'; }, 1500);
   });
 
-  li.querySelector('.dl-btn').addEventListener('click', () => {
+  dlBtn.addEventListener('click', () => {
     const trim = getTrimRangeFromInputs({
       trimRange: document.getElementById('trim-range-input'),
       trimStart: document.getElementById('trim-start-input'),

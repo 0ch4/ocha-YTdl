@@ -6,8 +6,16 @@
   <script src="../vendor/astring.min.js"></script>
   <script src="../vendor/yt.solver.core.js"></script>
   <script>
+    // 送信元は拡張のポップアップ/ワーカーページ（この iframe の親）のみ許可。
+    // 親以外のウィンドウや、拡張ページ以外のオリジンからのメッセージは無視する。
+    function isTrustedSender(event) {
+      if (event.source !== window.parent) return false;
+      return /^chrome-extension:\/\//.test(event.origin || '');
+    }
+
     window.addEventListener('message', function (event) {
       var data = event.data;
+      if (!isTrustedSender(event)) return;
       if (data && data.action === 'ping') {
         event.source.postMessage({ action: 'pong' }, event.origin || '*');
         return;

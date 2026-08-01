@@ -835,7 +835,11 @@ function mount() {
 function isMounted() {
   const button = document.getElementById(BUTTON_HOST_ID);
   const panel = document.getElementById(PANEL_HOST_ID);
-  return !!(button && panel && button.isConnected && button.offsetParent);
+  // ボタンとパネルの両方が生きていて初めて「差し込まれている」とする。
+  // 片方だけ(特にパネル)が YouTube 側の再描画で消えたケースは、ここで false を
+  // 返して ensureMounted に再差し込みさせる。パネルは開いていない時に display:none に
+  // なる(offsetParent が null)ため、offsetParent はボタンだけを見る。
+  return !!(button && panel && button.isConnected && panel.isConnected && button.offsetParent);
 }
 
 // Shorts は操作列が縦で、パネルを置く余白は幅次第。広い時は動画の右に余白が残るので
@@ -980,7 +984,6 @@ async function init() {
     await restore();
   }
   mount();
-  watchForRemount();
 }
 
 // YouTube はナビゲーション後もアクション行を非同期に作り直すことがあり、その時に
@@ -1030,3 +1033,6 @@ function watchForRemount() {
 
 document.addEventListener('yt-navigate-finish', init);
 init();
+// セーフティネットは初期化の成否に関わらず必ず起動する。init が videoId 無しで
+// 早期リターンしても、あとから SPA 遷移で watch/shorts に移れば ensureMounted が拾う。
+watchForRemount();

@@ -25,8 +25,16 @@
       target.postMessage(msg, origin || '*', transfer || []);
     }
 
+    // 送信元は拡張のポップアップ/ワーカーページ（この iframe の親）のみ許可。
+    // 親以外のウィンドウや、拡張ページ以外のオリジンからのメッセージは無視する。
+    function isTrustedSender(event) {
+      if (event.source !== window.parent) return false;
+      return /^chrome-extension:\/\//.test(event.origin || '');
+    }
+
     window.addEventListener('message', async function (event) {
       var data = event.data;
+      if (!isTrustedSender(event)) return;
       if (!data) return;
       var src = event.source;
       var origin = event.origin || '*';
@@ -61,35 +69,32 @@
           Module.FS.writeFile(aName, new Uint8Array(data.audio));
           data.audio = null;
 
-          // -c copy : stream copy, no re-encode (fast, lossless)
-          var muxOutName = data.trim ? ('full_' + oName) : oName;
-          var args = ['-i', vName, '-i', aName, '-c', 'copy'];
-          if (/\.(?:mp4|m4a|mov)$/i.test(muxOutName)) args.push('-movflags', '+faststart');
-          args.push(muxOutName);
+          // 切り出しは中間ファイルを作らず1パスで行う。全ファイルを一度合成してから
+          // 切る方式は、入力2つ+中間+出力を同時に MEMFS へ保持するため、大容量クリップ
+          // で wasm32 のヒープ(≈1.1GB)を枯らして「指定したのに切り出せない」になる。
+          // ここでは入力側シーク(-ss を -i の前)で -c copy のまま直に切る。
+          // -ss は2入力それぞれの直前に置き、-t は出力オプションとして全体に効かせる。
+          // -avoid_negative_ts make_zero で先頭TSを0に正規化(音声が先頭から欠けない)。
+          var args = [];
+          var trimStart = data.trim && data.trim.start;
+          var trimDuration = data.trim && data.trim.duration;
+          if (trimStart) args.push('-ss', trimStart);
+          args.push('-i', vName);
+          if (trimStart) args.push('-ss', trimStart);
+          args.push('-i', aName);
+          if (trimDuration) args.push('-t', trimDuration);
+          args.push('-c', 'copy', '-avoid_negative_ts', 'make_zero');
+          if (/\.(?:mp4|m4a|mov)$/i.test(oName)) args.push('-movflags', '+faststart');
+          args.push(oName);
           var rc = Module.exec.apply(Module, args);
 
           if (rc !== 0) throw new Error('ffmpeg exited with code ' + rc + '\n' + logs.slice(-12).join('\n'));
-
-          if (data.trim) {
-            // 入力シーク(-ss を -i の前)で最寄りキーフレームへ。-c copy でも音声が
-            // 先頭から欠けないようにする。-avoid_negative_ts make_zero で先頭TSを0に正規化。
-            var cutArgs = [];
-            if (data.trim.start) cutArgs.push('-ss', data.trim.start);
-            cutArgs.push('-i', muxOutName);
-            if (data.trim.duration) cutArgs.push('-t', data.trim.duration);
-            cutArgs.push('-c', 'copy', '-avoid_negative_ts', 'make_zero');
-            if (/\.(?:mp4|m4a|mov)$/i.test(oName)) cutArgs.push('-movflags', '+faststart');
-            cutArgs.push(oName);
-            var cutRc = Module.exec.apply(Module, cutArgs);
-            if (cutRc !== 0) throw new Error('ffmpeg trim exited with code ' + cutRc + '\n' + logs.slice(-12).join('\n'));
-          }
 
           var out = Module.FS.readFile(oName);
 
           // tidy up MEMFS so repeated muxes don't accumulate
           try { Module.FS.unlink(vName); } catch (_) {}
           try { Module.FS.unlink(aName); } catch (_) {}
-          if (data.trim) { try { Module.FS.unlink(muxOutName); } catch (_) {} }
           try { Module.FS.unlink(oName); } catch (_) {}
 
           var buf = out.buffer;
