@@ -58,9 +58,38 @@ function isShortsPage() {
 // 向こうが変えた時に外れるので、**実際に空いている幅を測って**決める。
 const SHORTS_PANEL_MIN_WIDTH = 340;
 
+// 一つのドキュメントに同じ ID/クラスのコンテナが複数残ることがある(SPA 遷移直後や
+// Shorts が残す隠れ watch DOM、ビルド中のスケルトンなど)。querySelector は最初の一致を
+// 返すので、幽霊コンテナが先にあると「本物を見つけられない」ままになる。ページを開いて
+// すぐ動画まで進む場合に特に起きやすく、リロードまでボタンが出なくなる主因。ここでは
+// 「実際に見えている(offsetParent が非null)」ものを選んで返す。
+// #middle-row 自身は空だと display:none になるので、その可視性ではなく ytd-watch-flexy
+// を見る(Shorts ではそれが display:none。watch ページの正常状態は非表示ではない)。
+function findLiveWatchContainers() {
+  let row = null;
+  for (const el of document.querySelectorAll('#top-level-buttons-computed')) {
+    const flexy = el.closest('ytd-watch-flexy');
+    // Shorts にも #top-level-buttons-computed はあるが、それは ytd-shorts-player-controls
+    // 配下で watch の高評価行ではない。watch の行は必ず ytd-watch-flexy の中にある。
+    if (flexy && flexy.offsetParent && el.offsetParent) { row = el; break; }
+  }
+  let slot = null;
+  for (const el of document.querySelectorAll('#middle-row')) {
+    const flexy = el.closest('ytd-watch-flexy');
+    if (flexy && flexy.offsetParent) { slot = el; break; }
+  }
+  return { row, slot };
+}
+
 function shortsLayout() {
-  const bar = document.querySelector('reel-action-bar-view-model');
-  const container = document.querySelector('.ytReelPlayerOverlayViewModelActionsContainer');
+  let bar = null;
+  for (const el of document.querySelectorAll('reel-action-bar-view-model')) {
+    if (el.offsetParent) { bar = el; break; }
+  }
+  let container = null;
+  for (const el of document.querySelectorAll('.ytReelPlayerOverlayViewModelActionsContainer')) {
+    if (el.offsetParent) { container = el; break; }
+  }
   if (!bar || !container) return null;
   const b = bar.getBoundingClientRect();
   const c = container.getBoundingClientRect();
@@ -829,17 +858,35 @@ function mount() {
 }
 
 // 「存在する」と「実際に表示されている」は別。YouTube側の遷移中にホストだけが
-// 非表示の親に取り残されると、存在チェックだけでは永久に気づけない
-// (中身を作り直しても同じ非表示の親に置くだけで意味が無いため)。
-// isConnected は詳細度チェック用、offsetParent は非表示(display:none 系)の検出用。
+// 非表示の親に取り残されると、存在チェックだけでは永久に気づけない。
+// isConnected は詳細度チェック用。offsetParent(display:none の検出)は使わない:
+//   - offsetParent は display:none しか見ないので、visibility:hidden や SPA 遷移で
+//     残される「幽霊コンテナ」(まだ connected で offsetParent は非null)を
+//     「生きている」と誤判定し、ensureMounted が再差し込みをスキップしてしまう。
+//     これが「リロードするまでボタンが出ない」報告の主因。
+//   - 代わりに「今見ているページの実コンテナに子として入っているか」で判定する。
+//     YouTube がアクション行を作り直すと旧ホストは新しいコンテナの子ではなくなるので、
+//     確実に再差し込み対象になる。
 function isMounted() {
   const button = document.getElementById(BUTTON_HOST_ID);
   const panel = document.getElementById(PANEL_HOST_ID);
-  // ボタンとパネルの両方が生きていて初めて「差し込まれている」とする。
-  // 片方だけ(特にパネル)が YouTube 側の再描画で消えたケースは、ここで false を
-  // 返して ensureMounted に再差し込みさせる。パネルは開いていない時に display:none に
-  // なる(offsetParent が null)ため、offsetParent はボタンだけを見る。
-  return !!(button && panel && button.isConnected && panel.isConnected && button.offsetParent);
+  if (!button || !panel || !button.isConnected || !panel.isConnected) return false;
+
+  if (isWatchPage()) {
+    // 今見ているページの実コンテナ(可視のもの)に両方が入っていること。YouTube が
+    // 作り直した場合、旧ホストは新しい row/slot の子ではないので false になり再差し込み
+    // される。querySelectorAll で「見えている」ものを探すのは、幽霊コンテナ(先頭に
+    // 残った旧 row/slot)にホストが残っていると、存在だけでは誤判定するため。
+    const { row, slot } = findLiveWatchContainers();
+    return !!(row && slot && row.contains(button) && slot.contains(panel));
+  }
+
+  if (isShortsPage()) {
+    const layout = shortsLayout();
+    return !!(layout && layout.bar.contains(button) && layout.container.contains(panel));
+  }
+
+  return false;
 }
 
 // Shorts は操作列が縦で、パネルを置く余白は幅次第。広い時は動画の右に余白が残るので
@@ -916,15 +963,12 @@ function mountWatch() {
   // 実際に watch ページを見ているかを URL で判定し、器も見えているものだけ使う。
   if (!isWatchPage()) return false;
 
-  const row = document.querySelector('#top-level-buttons-computed');
-  const slot = document.querySelector('#middle-row');
+  // 「今見えている」実コンテナを選ぶ。querySelector の先頭一致で旧・隠れたコンテナに
+  // 挿すと、作られた直後のページ遷移中(特にロード完了付近)にそこが捨てられて消える。
+  // 加えて #middle-row は空のとき display:none になるので、器ではなく ytd-watch-flexy
+  // が生きているかで選ぶ(Shorts ではそれが display:none になる)。
+  const { row, slot } = findLiveWatchContainers();
   if (!row || !slot) return false;
-  // 隠れた watch DOM(Shorts が残していくもの)を拒否する。ただし #middle-row 自身の
-  // 可視性で判断してはいけない: 空のとき display:none で、中身が入って初めて表示
-  // される。watch ページの正常な状態がそれなので、器ではなく ytd-watch-flexy が
-  // 生きているかを見る。Shorts ではそれが display:none になる。
-  const flexy = slot.closest('ytd-watch-flexy');
-  if (!row.offsetParent || !flexy || !flexy.offsetParent) return false;
   if (isMounted()) return true;
 
   for (const id of [BUTTON_HOST_ID, PANEL_HOST_ID]) {
