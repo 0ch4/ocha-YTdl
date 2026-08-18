@@ -179,7 +179,12 @@ function el(tag, props = {}, styles = '') {
 const CFG = () => globalThis.OCHA_YTDL_YOUTUBE_CONFIG;
 
 // ページ内から使えるのは pot も sts も要らないクライアントだけ。
-const PAGE_CLIENTS = ['android_vr', 'visionos'];
+// 2026-08-18: android_vr の直URL機能はサーバ側で無効化された(yt-dlp issue #17456)。
+// fetchFormats は最初に成功したクライアントをそのまま返す(先勝ち)ので、順序がそのまま
+// 優先順位になる。android_vr は形だけ成功して後段のDLで403になるだけなので最後に回す。
+// [[tech-potoken]] 参照。popup.js/config/youtube.js の innertubeClientProfiles と
+// 同じ理由で同じ並びにしてある。
+const PAGE_CLIENTS = ['visionos', 'android_vr'];
 
 // visitorData が無いと LOGIN_REQUIRED（bot検問）になる。実測では Cookie でも sts でも
 // UA でもなく、この X-Goog-Visitor-Id ヘッダの有無だけで OK と LOGIN_REQUIRED が
@@ -705,7 +710,14 @@ function renderPicker() {
     return { value: String(h), label };
   }));
 
-  const audios = state.formats.filter(f => f.hasAudio && !f.hasVideo).sort((a, b) => b.bitrate - a.bitrate);
+  // 映像の既定はmp4優先(上のコメント参照)なので、音声も単純ビットレート降順にすると
+  // webm/opus(itag251等、mp4/m4aよりビットレートが高いことが多い)が既定になり、
+  // mp4映像+webm音声の混在→chooseMuxContainerがmkvにフォールバックしてしまう。
+  // m4a/mp4を優先し、その中でビットレート最大を既定にすることでmp4既定同士を揃える
+  // (webm音声を選びたい場合は手動でドロップダウンから選べる)。
+  const audioExtPriority = f => (f.ext === 'm4a' || f.ext === 'mp4') ? 0 : 1;
+  const audios = state.formats.filter(f => f.hasAudio && !f.hasVideo)
+    .sort((a, b) => audioExtPriority(a) - audioExtPriority(b) || b.bitrate - a.bitrate);
   fillSelect(els.audio, audios.map(f => ({
     value: String(f.itag),
     label: `${f.ext} ${Math.round(f.bitrate / 1000)}k`

@@ -20,31 +20,9 @@ globalThis.OCHA_YTDL_YOUTUBE_CONFIG = Object.freeze({
   },
   innertubeClientProfiles: [
     {
-      // yt-dlp の第一デフォルト(_DEFAULT_CLIENTS)。直URL/pot不要/JSプレーヤー不要(n,sig無し)。
-      // clientVersion は 1.65 を超えると SABR only が返りうるため 1.65.10 に固定すること。
-      // yt-dlp は「Made for kids はこのクライアントで取得不可」と注記しているが、こちらでは
-      // 未確認。過去に LOGIN_REQUIRED を Made for kids と誤って結論づけたことがある。実際の
-      // 原因は X-Goog-Visitor-Id の欠落で、送れば 12/12 通った。同じ間違いをしないこと。
-      key: 'android_vr',
-      clientName: 'ANDROID_VR',
-      clientVersion: '1.65.10',
-      contextClient: {
-        clientName: 'ANDROID_VR',
-        clientVersion: '1.65.10',
-        deviceMake: 'Oculus',
-        deviceModel: 'Quest 3',
-        androidSdkVersion: 32,
-        userAgent: 'com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
-        osName: 'Android',
-        osVersion: '12L',
-        hl: 'ja',
-        gl: 'JP'
-      }
-    },
-    {
-      // android_vr と同じ性質(直URL/pot不要/JSプレーヤー不要)を持つ二枚目のカード。
-      // android_vr が塞がれた時の保険として android_vr の直後に置く。
-      // yt-dlp は android_vr 同様「Made for kids は取得不可」と注記している。こちらでは未確認。
+      // 直URL/pot不要/JSプレーヤー不要(n,sig無し)。2026-08実測: android_vrが約42MBから
+      // 403の壁を持つようになった(yt-dlp issue #17348, GVS PO Token要求化)一方、visionosは
+      // 同時点で壁なし(150MB地点まで200確認)。そのため最優先はvisionosにしてある。
       key: 'visionos',
       clientName: 'VISIONOS',
       clientVersion: '1.02',
@@ -133,6 +111,27 @@ globalThis.OCHA_YTDL_YOUTUBE_CONFIG = Object.freeze({
       contextClient: {
         clientName: 'WEB',
         userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.5 Safari/605.1.15,gzip(gfe)',
+        hl: 'ja',
+        gl: 'JP'
+      }
+    },
+    {
+      // 2026-08-18: android_vr の直URL機能はサーバ側で無効化された(yt-dlp issue #17456で
+      // 世界規模の同時多発403として確定)。この clientVersion(1.65.10)はまだ直URLらしき
+      // ものを返すが実際には403になる「死んだ経路」。他の全クライアントが失敗した時の
+      // 最終手段としてのみ残す(ユーザー指示、2026-08-18)。詳細 [[tech-potoken]]。
+      key: 'android_vr',
+      clientName: 'ANDROID_VR',
+      clientVersion: '1.65.10',
+      contextClient: {
+        clientName: 'ANDROID_VR',
+        clientVersion: '1.65.10',
+        deviceMake: 'Oculus',
+        deviceModel: 'Quest 3',
+        androidSdkVersion: 32,
+        userAgent: 'com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
+        osName: 'Android',
+        osVersion: '12L',
         hl: 'ja',
         gl: 'JP'
       }

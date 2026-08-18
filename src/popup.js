@@ -357,6 +357,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         hasAudio,
         source: fmt.source ?? null,
         potFree: isPotFreeSource(fmt.source),
+        altUrls: (fmt._altUrls || []).filter(a => a.url),
         height: fmt.height ?? null, fps: fmt.fps ?? null, bitrate: fmt.bitrate ?? null,
         ...audio,
       }];
@@ -697,6 +698,18 @@ function isPotFreeSource(source) {
   return POT_FREE_SOURCES.has(source);
 }
 
+// innertubeClientProfiles の並び順 = 優先順位（先頭ほど高優先）。dedupeRawFormats の
+// 同点判定で使う。API応答のcontentLength/bitrate有無の偶然でスコアが動いても、
+// この明示的な優先順位が「先に並べたクライアントを優先する」意図を保証する
+// (2026-08: visionosをandroid_vrより先に並べても、スコアだけに頼ると壁ありの
+// android_vr が偶然勝つ余地があった)。
+const CLIENT_PRIORITY = new Map(
+  (YOUTUBE_CONFIG.innertubeClientProfiles || []).map((p, i) => [p.key, (YOUTUBE_CONFIG.innertubeClientProfiles.length - i)])
+);
+function clientPriority(source) {
+  return CLIENT_PRIORITY.get(source) ?? 0;
+}
+
 // player.js を storage.local キャッシュ付きで取得（n/sig復号に使う 2.5MB 級）。
 async function getCachedPlayerJs(playerJsUrl) {
   try {
@@ -740,6 +753,9 @@ async function fetchInnertubePlayerResponses(videoId, innertube = {}, statusEl =
       // 先頭クライアントが解決可能な adaptive 映像を返せば以降は叩かない＝高速化。
       // progressive(itag18 360p)だけを見て打ち切ってはいけない: SABR-only 応答でも
       // itag18 は生きたまま返るので、それを成功と誤認すると 360p で頭打ちになる。
+      // android_vr は 2026-08-18 にサーバ側で死んだ(直URLらしきものを返すが403になるだけ)
+      // ので保険としての自動追い打ちはやめ、プロファイル順で最後(最終フォールバック)に
+      // 回した(ユーザー指示)。よって通常はここで素直に打ち切ってよい。
       if (hasResolvableAdaptiveVideo(response)) break;
     } catch (e) {
       errors.push(`${client.key}: ${e.message}`);
@@ -997,6 +1013,9 @@ function hasResolvableAdaptiveVideo(response) {
     canResolveRawFormat(fmt) && (fmt.height || /^video\//.test(fmt.mimeType || '')));
 }
 
+// pot不要ソース(android_vr/visionos等)は同itagでも複数クライアントから直URLが取れる。
+// スコアが同点だと片方しか残らないが、選ばれなかった方も「壁に当たった時の代替URL」
+// として current._altUrls に積んでおく(fetchRangeが403時に切り替える用途)。
 function dedupeRawFormats(formats) {
   const byKey = new Map();
 
@@ -1013,9 +1032,26 @@ function dedupeRawFormats(formats) {
     ].join(':');
     const current = byKey.get(key);
 
-    if (!current || rawFormatScore(fmt) > rawFormatScore(current)) {
+    if (!current) {
       byKey.set(key, fmt);
+      continue;
     }
+
+    const scoreFmt = rawFormatScore(fmt);
+    const scoreCurrent = rawFormatScore(current);
+    // スコアが同点の場合は挿入順の偶然に頼らず、明示的なクライアント優先順位で決める
+    // (同じpot不要ソースでもAPI応答のフィールド有無でスコアが動くことがあるため)。
+    const fmtWins = scoreFmt !== scoreCurrent
+      ? scoreFmt > scoreCurrent
+      : clientPriority(fmt.source) > clientPriority(current.source);
+    const winner = fmtWins ? fmt : current;
+    const loser = winner === fmt ? current : fmt;
+    const altUrls = [...(winner._altUrls || []), ...(loser._altUrls || [])];
+    if (isPotFreeSource(loser.source) && loser.url && loser.source !== winner.source) {
+      altUrls.push({ source: loser.source, url: loser.url });
+    }
+    if (altUrls.length) winner._altUrls = altUrls;
+    byKey.set(key, winner);
   }
 
   return [...byKey.values()];
@@ -1681,9 +1717,11 @@ async function generatePoTokenInBrowser(identifier) {
   }
 }
 
-function rangedUrl(url, start, end) {
+function rangedUrl(url, start, end, potFree) {
   let u = url + (url.includes('?') ? '&' : '?') + `range=${start}-${end}`;
-  if (_pot && !/[?&]pot=/.test(u)) u += '&pot=' + encodeURIComponent(_pot);
+  // pot不要ソース(android_vr/tv等)に無関係なpotを付けるとサーバに拒否される(403)ため、
+  // pot必須ソースの時だけ付与する。
+  if (!potFree && _pot && !/[?&]pot=/.test(u)) u += '&pot=' + encodeURIComponent(_pot);
   return u;
 }
 
@@ -1699,9 +1737,9 @@ async function fetchFormatBytes(fmt, onProgress) {
   }
 
   if (!total) {
-    const r = await fetch(fmt.url);
-    if (!r.ok && r.status !== 206) throw new Error(`HTTP ${r.status}`);
-    return new Uint8Array(await r.arrayBuffer());
+    const res = await fetchChunkWithTimeout(fmt.url, CHUNK_TIMEOUT_MS);
+    if (res.status !== 200 && res.status !== 206) throw new Error(`HTTP ${res.status}`);
+    return new Uint8Array(res.buf);
   }
 
   const chunkSize = Math.min(RANGE_CHUNK_SIZE, Math.max(1, Math.ceil(total / 2)));
@@ -1720,7 +1758,7 @@ async function fetchFormatBytes(fmt, onProgress) {
   async function worker() {
     while (next < ranges.length) {
       const [s, e] = ranges[next++];
-      const part = await fetchRange(fmt.url, s, e, fmt);
+      const part = await fetchRange(fmt, s, e);
       out.set(part, s);
       done += part.length;
       if (onProgress) onProgress(Math.floor((done / total) * 100));
@@ -1733,7 +1771,26 @@ async function fetchFormatBytes(fmt, onProgress) {
   return out;
 }
 
-async function fetchRange(url, start, end, fmt) {
+const CHUNK_TIMEOUT_MS = 30000; // 応答なしの接続で Promise.all が永久に固まるのを防ぐ
+
+// fetch + arrayBuffer 読み取りをまとめて1つの AbortController で見張る。
+// ヘッダ受信後もボディ読み取りが固まるケースがあるため、タイマーはボディ読了までクリアしない。
+async function fetchChunkWithTimeout(url, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, { signal: controller.signal });
+    if (r.status === 200 || r.status === 206) {
+      const buf = await r.arrayBuffer();
+      return { status: r.status, contentType: r.headers.get('content-type') || '', buf };
+    }
+    return { status: r.status, contentType: '', buf: null };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchRange(fmt, start, end) {
   const backoffs = [0, 1000, 3000, 7000, 15000]; // 各試行前の待機(ms)
   const MAX_POT_RETRIES = 2; // pot生成での同一チャンク再試行は高々これだけ（無限ループ防止）
   let lastStatus = 0;
@@ -1742,24 +1799,26 @@ async function fetchRange(url, start, end, fmt) {
 
   for (let attempt = 0; attempt < backoffs.length; attempt++) {
     if (backoffs[attempt]) await delay(backoffs[attempt]);
-    let r;
+    // fmt.url を毎回読み直す: 並列ワーカーの誰かが altUrls へ切り替えていれば
+    // このチャンクの再試行にもそれが反映される。
+    let res;
     try {
-      r = await fetch(rangedUrl(url, start, end)); // _pot があれば &pot= が付く
+      res = await fetchChunkWithTimeout(rangedUrl(fmt.url, start, end, fmt.potFree), CHUNK_TIMEOUT_MS); // pot必須ソースの時だけ _pot があれば &pot= が付く
     } catch (e) {
-      lastStatus = -1;
+      lastStatus = -1; // ネットワークエラー/タイムアウト(AbortError含む)
       continue;
     }
 
-    if (r.status === 200 || r.status === 206) {
-      const ct = r.headers.get('content-type') || '';
-      if (!isExpectedMediaType(ct, fmt)) throw new Error(`想定外のContent-Type: ${ct || 'unknown'}`);
-      return new Uint8Array(await r.arrayBuffer());
+    if (res.status === 200 || res.status === 206) {
+      if (!isExpectedMediaType(res.contentType, fmt)) throw new Error(`想定外のContent-Type: ${res.contentType || 'unknown'}`);
+      return new Uint8Array(res.buf);
     }
 
-    lastStatus = r.status;
+    lastStatus = res.status;
 
     // 20MB超で403かつ未だpot未取得なら「必要になった時だけ」遅延生成して即再試行
-    if (r.status === 403 && start >= POT_FREE_LIMIT && !_pot && !triedPot) {
+    // (pot不要ソースはpotを付けても無意味なので対象外。単なるレート制限として下のbackoffに任せる)
+    if (res.status === 403 && start >= POT_FREE_LIMIT && !_pot && !triedPot && !fmt.potFree) {
       triedPot = true;
       setMuxProgress('PO Tokenを生成中...');
       await ensurePot();
@@ -1768,11 +1827,25 @@ async function fetchRange(url, start, end, fmt) {
       if (_pot && potRetries < MAX_POT_RETRIES) { potRetries++; attempt--; continue; }
     }
 
-    if (r.status !== 403 && r.status !== 429 && r.status < 500) break; // 恒久的エラーは即中断
+    // pot不要ソースが途中(数十MB)で壁に当たった場合(2026-08実測): 同itagの別クライアント
+    // 直URLが dedupeRawFormats で altUrls に積んであれば切り替えて即再試行する。
+    // fmt はワーカー間で共有されているので、一度の切替が他チャンクの再試行にも効く。
+    if ((res.status === 403 || res.status === 429) && fmt.potFree && Array.isArray(fmt.altUrls) && fmt.altUrls.length) {
+      const alt = fmt.altUrls.shift();
+      if (alt && alt.url && alt.url !== fmt.url) {
+        console.warn(`[ytdl] ${fmt.source}経路が${start}バイト付近で塞がれたため${alt.source}に切替`);
+        fmt.url = alt.url;
+        fmt.source = alt.source;
+        attempt--;
+        continue;
+      }
+    }
+
+    if (res.status !== 403 && res.status !== 429 && res.status < 500) break; // 恒久的エラーは即中断
   }
 
   let hint = '';
-  if (lastStatus === 403 && start >= POT_FREE_LIMIT) {
+  if (lastStatus === 403 && start >= POT_FREE_LIMIT && !fmt.potFree) {
     hint = _pot
       ? '（PO Tokenが無効/期限切れの可能性。YouTube動画を再生し直してから再試行してください）'
       : '（PO Tokenが必要です。YouTube動画を数秒再生してから再試行してください）';
