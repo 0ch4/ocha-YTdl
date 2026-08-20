@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-08-18T19:06:02.512Z",
+  "generatedAt": "2026-08-20T19:09:32.929Z",
   "latestExtensionVersion": "0.9.2",
   "minimumRecommended": {
-    "ytDlpRelease": "2026.07.04",
+    "ytDlpRelease": "2026.08.19",
     "ejsVersion": "0.8.0"
   },
   "severity": "recommended",
@@ -19,19 +19,18 @@
     }
   ],
   "upstream": {
-    "ytDlpRelease": "2026.07.04",
-    "ytDlpUrl": "https://github.com/yt-dlp/yt-dlp/releases/tag/2026.07.04",
-    "publishedAt": "2026-07-04T22:41:44Z",
+    "ytDlpRelease": "2026.08.19",
+    "ytDlpUrl": "https://github.com/yt-dlp/yt-dlp/releases/tag/2026.08.19",
+    "publishedAt": "2026-08-19T23:48:43Z",
     "youtubeChanges": [
-      "Fix extract_relative_time for abbreviated units (#16687) by dialmaster",
-      "Fix detection of forced preroll wait time (#17062) by bashonly",
-      "Fix minor issues (#17060) by doe1080",
-      "Support live adaptive formats (#16771) by dreammu",
-      "tab",
-      "Fix flat extraction of collaborators (#17045) by bashonly",
-      "Fix flat playlist metadata extraction (#16965) by bashonly",
-      "Fix metadata extraction (#16976) by bashonly",
-      "Fix pagination (#16948) by bashonly"
+      "Add visionos player client (#17184) by bashonly",
+      "Add web_embedded client fallbacks (#17462) by bashonly",
+      "Extract channel_follower_count for collaborators (#17363) by bashonly",
+      "Fix live adaptive fragments generation (#17262) by bashonly",
+      "Player client maintenance (#17261) by bashonly",
+      "Remove android_vr from default clients (#17461) by bashonly",
+      "Update player client versions (#17185) by bashonly",
+      "tab: Always extract channel metadata (#17386) by bashonly, bbilly1"
     ]
   }
 }
