@@ -45,15 +45,16 @@ async function main() {
     fetchText(rawFile(clientsCommit, 'yt_dlp/extractor/youtube/_video.py')),
   ]);
 
-  const clientDrift = diffClients(
-    await readBundledConfig(),
-    parseUpstreamClients(basePy),
-    parseDefaultClients(videoPy),
-  );
+  const bundledConfig = await readBundledConfig();
+  const upstreamClients = parseUpstreamClients(basePy);
+  const defaultClients = parseDefaultClients(videoPy);
+  const excludedClients = readIntentionalExclusions(bundledConfig, upstreamClients, defaultClients);
+  const clientDrift = diffClients(bundledConfig, upstreamClients, defaultClients, excludedClients);
   const clientsInSync = clientDrift.length === 0;
   // master の SHA は毎日変わるので生成物には書かない（毎日無意味な差分が出るため）。ログにだけ残す。
   console.log(`Clients compared against ${CLIENTS_REF} (${clientsCommit.slice(0, 7)}): ${clientsInSync ? 'in sync' : `${clientDrift.length} drifted`}`);
   for (const entry of clientDrift) console.log(`  drift: ${entry.summaryEn}`);
+  for (const entry of excludedClients) console.log(`  excluded on purpose: ${entry.client}`);
 
   const ejsVersion = extractRequiredEjsVersion(pyproject);
   const wheel = await fetchEjsWheel(ejsVersion);
@@ -95,6 +96,7 @@ async function main() {
         ? SYNCED_MESSAGE_EN
         : `Innertube client definitions have drifted from yt-dlp ${CLIENTS_REF}: ${clientDrift.map(entry => entry.summaryEn).join(' / ')}`,
       clientDrift,
+      excludedClients,
       upstream: {
         ytDlpRelease,
         ytDlpUrl: release.html_url || `https://github.com/${YTDLP_REPO}/releases/tag/${ytDlpRelease}`,
@@ -227,9 +229,32 @@ async function readBundledConfig() {
 // 「未同梱」と誤判定しないよう、比較前に読み替える。
 const UPSTREAM_KEY_TO_BUNDLED_KEY = { web: 'page_web' };
 
-function diffClients(config, upstreamClients, defaultClients) {
+// 「上流の既定だが意図的に同梱しない」クライアントを config から読む。理由が書かれて
+// いない除外は認めない(黙って警告を消す抜け穴にしないため)。上流に存在しないキーが
+// 挙がっていたら綴り間違いか上流の改名なので throw する。
+function readIntentionalExclusions(config, upstreamClients, defaultClients) {
+  const excluded = [];
+  for (const [client, note] of Object.entries(config.intentionallyUnbundledClients || {})) {
+    if (!note?.reasonJa || !note?.reasonEn) {
+      throw new Error(`intentionallyUnbundledClients.${client} needs both reasonJa and reasonEn`);
+    }
+    if (!upstreamClients.has(client)) {
+      throw new Error(`intentionallyUnbundledClients.${client} is not a client in yt-dlp ${CLIENTS_REF}`);
+    }
+    if (!defaultClients.has(client)) {
+      // 上流が既定から外した＝除外の記述はもう要らない。壊れてはいないので落とさず知らせる。
+      console.log(`  stale exclusion: ${client} is no longer a yt-dlp default client; drop it from intentionallyUnbundledClients`);
+      continue;
+    }
+    excluded.push({ client, reasonJa: note.reasonJa, reasonEn: note.reasonEn });
+  }
+  return excluded;
+}
+
+function diffClients(config, upstreamClients, defaultClients, excludedClients = []) {
   const drift = [];
   const bundledKeys = new Set(config.innertubeClientProfiles.map(profile => profile.key));
+  const excludedKeys = new Set(excludedClients.map(entry => entry.client));
 
   for (const profile of config.innertubeClientProfiles) {
     // page_web / web_safari はページから版を取るので固定値を持たない
@@ -263,6 +288,7 @@ function diffClients(config, upstreamClients, defaultClients) {
   for (const key of defaultClients) {
     const bundledKey = UPSTREAM_KEY_TO_BUNDLED_KEY[key] || key;
     if (bundledKeys.has(bundledKey)) continue;
+    if (excludedKeys.has(key)) continue; // 理由付きで除外済み(latest.json の excludedClients に出る)
     drift.push({
       client: key,
       bundled: null,
