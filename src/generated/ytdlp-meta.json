@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "extensionVersion": "0.9.3",
+  "extensionVersion": "0.10.0",
   "ytDlpRelease": "2026.08.19",
   "ytDlpCommit": "3a08bea",
   "ejsVersion": "0.8.0",
