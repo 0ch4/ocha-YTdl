@@ -1214,10 +1214,11 @@ function mountPlaylist() {
   const playlistId = currentPlaylistId();
   if (!playlistId) return;
 
-  // 差し込み先: プレイリストヘッダーのアクション行を探す
-  // #page-header-container か ytd-playlist-header-renderer の actions 領域
+  // 差し込み先: プレイリストヘッダーのアクション領域。
+  // 2025- の YouTube は yt-flexible-actions-view-model を使う（旧 ytd-playlist-header-renderer #actions は空）。
   let anchor = null;
   for (const sel of [
+    'yt-flexible-actions-view-model',
     'ytd-playlist-header-renderer #actions',
     'ytd-playlist-header-renderer .metadata-actions-container',
     '#page-header-container #actions',
