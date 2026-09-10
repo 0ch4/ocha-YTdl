@@ -1935,8 +1935,25 @@ function setupPlaylistUI(playlistId, tab) {
     if (!items.length) return;
     dlBtn.disabled = true;
     fetchBtn.disabled = true;
-    const visitorData = null; // ページから取得済みなら使う
+    // visitorData をページから取得（無いと LOGIN_REQUIRED になる）
+    let visitorData = null;
+    try {
+      const [vdResult] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        world: 'MAIN',
+        func: () => {
+          for (const s of document.querySelectorAll('script')) {
+            const t = s.textContent || '';
+            const m = t.match(/"visitorData":\s*"([^"]+)"/);
+            if (m) return m[1].replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+          }
+          return null;
+        }
+      });
+      visitorData = vdResult?.result || null;
+    } catch (_) {}
     let ok = 0, fail = 0;
+    const errors = [];
     for (const item of items) {
       progressEl.textContent = `${item.index}/${items.length}: ${item.title.slice(0, 40)}...`;
       try {
@@ -1944,12 +1961,15 @@ function setupPlaylistUI(playlistId, tab) {
         ok++;
       } catch (e) {
         fail++;
+        errors.push(`${item.index}. ${e?.message || e}`);
         console.warn(`[ytdl] playlist item failed: ${item.videoId}`, e);
       }
       // レート制限回避のため少し待つ
       await new Promise(r => setTimeout(r, 800));
     }
-    progressEl.textContent = `完了: ${ok}件成功, ${fail}件失敗`;
+    progressEl.textContent = errors.length
+      ? `完了: ${ok}成功 / ${fail}失敗 — ${errors[0]}`
+      : `完了: ${ok}件成功`;
     dlBtn.textContent = '保存開始済み';
   });
 }

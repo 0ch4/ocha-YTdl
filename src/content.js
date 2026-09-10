@@ -1143,6 +1143,11 @@ async function init() {
     await restore();
   }
   mount();
+
+  // watch ページでプレイリスト付き（&list=...）ならプレイリストボタンも出す
+  if (isWatchPage() && currentPlaylistId() && !isShortsPage()) {
+    mountPlaylist();
+  }
 }
 
 // YouTube はナビゲーション後もアクション行を非同期に作り直すことがあり、その時に
@@ -1160,6 +1165,10 @@ function ensureMounted() {
   if (!currentVideoId()) return;
   if (isMounted()) return;
   mount();
+  // watch ページでプレイリスト付きならボタンも補う
+  if (isWatchPage() && currentPlaylistId() && !isShortsPage()) {
+    if (!document.getElementById(PLAYLIST_HOST_ID)) mountPlaylist();
+  }
 }
 
 let remountObserver = null;
@@ -1257,6 +1266,7 @@ function mountPlaylist() {
       label.textContent = '開始';
 
       let ok = 0, fail = 0;
+      const errors = [];
       for (const item of items) {
         note.textContent = `${item.index}/${items.length}: ${item.title.slice(0, 40)}`;
         try {
@@ -1264,12 +1274,18 @@ function mountPlaylist() {
           ok++;
         } catch (e) {
           fail++;
+          errors.push(`${item.index}. ${e?.message || e}`);
           console.warn('[ytdl] playlist item failed:', item.videoId, e);
         }
         // レート制限回避
         await new Promise(r => setTimeout(r, 600));
       }
-      note.textContent = `完了: ${ok}件成功 / ${fail}件失敗`;
+      if (errors.length) {
+        note.textContent = `完了: ${ok}成功 / ${fail}失敗 — ${errors[0]}`;
+        console.warn('[ytdl] playlist errors:', errors);
+      } else {
+        note.textContent = `完了: ${ok}件成功`;
+      }
       label.textContent = '全件保存';
       button.disabled = false;
     } catch (e) {
