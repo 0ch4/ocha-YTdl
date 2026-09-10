@@ -1809,7 +1809,11 @@ async function fetchPlaylistItems(playlistId, tabId) {
 }
 
 // プレイリスト動画1本分のフォーマットを取得してジョブを投げる
-async function queuePlaylistDownload(videoId, title, tabId, visitorData) {
+// opts: { folder: string|null, index: number|null, numberFiles: boolean }
+async function queuePlaylistDownload(videoId, title, tabId, visitorData, opts = {}) {
+  const fileOpts = {};
+  if (opts.folder) fileOpts.folder = opts.folder;
+  if (opts.numberFiles && opts.index != null) fileOpts.index = opts.index;
   const cfg = globalThis.OCHA_YTDL_YOUTUBE_CONFIG;
   const profile = cfg?.innertubeClientProfiles?.find(p => p.key === 'visionos');
   if (!profile) throw new Error('visionos client not found');
@@ -1864,7 +1868,7 @@ async function queuePlaylistDownload(videoId, title, tabId, visitorData) {
       contentLength: Number(best.contentLength) || null
     };
     await OchaDownload.dispatchDownloadJob({
-      items: [{ kind: 'single', fmt, dlKind: 'muxed', trim: null }],
+      items: [{ kind: 'single', fmt, dlKind: 'muxed', trim: null, opts: fileOpts }],
       videoTitle: title,
       ctx: { tabId, videoId, visitorData }
     });
@@ -1892,7 +1896,7 @@ async function queuePlaylistDownload(videoId, title, tabId, visitorData) {
   });
 
   await OchaDownload.dispatchDownloadJob({
-    items: [{ kind: 'mux', video: mk(video, true), audio: mk(audio, false), trim: null }],
+    items: [{ kind: 'mux', video: mk(video, true), audio: mk(audio, false), trim: null, opts: fileOpts }],
     videoTitle: title,
     ctx: { tabId, videoId, visitorData }
   });
@@ -1954,10 +1958,13 @@ function setupPlaylistUI(playlistId, tab) {
     } catch (_) {}
     let ok = 0, fail = 0;
     const errors = [];
+    const numCheck = document.getElementById('playlist-number');
+    const folderName = infoEl.textContent?.replace(/^リスト:\s*/, '') || playlistId;
+    const dlOpts = { folder: folderName, numberFiles: numCheck?.checked || false };
     for (const item of items) {
       progressEl.textContent = `${item.index}/${items.length}: ${item.title.slice(0, 40)}...`;
       try {
-        await queuePlaylistDownload(item.videoId, item.title, tab.id, visitorData);
+        await queuePlaylistDownload(item.videoId, item.title, tab.id, visitorData, { ...dlOpts, index: item.index });
         ok++;
       } catch (e) {
         fail++;

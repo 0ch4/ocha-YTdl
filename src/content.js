@@ -1243,11 +1243,23 @@ function mountPlaylist() {
   hosts.add(host);
   root.appendChild(styleSheet());
 
+  const row = el('div', {}, 'display:flex;align-items:center;gap:8px;');
   const button = el('button', { type: 'button', className: 'pill' });
   button.appendChild(cutIcon());
   const label = el('span', { textContent: '全件保存' });
   button.appendChild(label);
-  root.appendChild(button);
+  row.appendChild(button);
+
+  // ナンバリングオプション
+  const numWrap = el('label', {},
+    `${YT_FONT}display:inline-flex;align-items:center;gap:4px;font-size:11px;color:${YT_DIM};cursor:pointer;white-space:nowrap;`);
+  const numCheck = el('input', { type: 'checkbox' });
+  numCheck.style.cursor = 'pointer';
+  numWrap.appendChild(numCheck);
+  numWrap.appendChild(el('span', { textContent: '番号付き' }));
+  row.appendChild(numWrap);
+
+  root.appendChild(row);
   root.appendChild(buildMaintenanceDot('margin-left:4px;'));
   applyMaintenanceNotice();
 
@@ -1262,7 +1274,22 @@ function mountPlaylist() {
     try {
       const items = await fetchPlaylistItems(playlistId);
       if (!items.length) throw new Error('動画が見つかりませんでした');
-      note.textContent = `${items.length}件の動画を順次保存します`;
+
+      // プレイリストタイトルをページから取得（フォルダ名に使う）
+      let playlistTitle = null;
+      try {
+        playlistTitle = document.querySelector(
+          'yt-dynamic-text-view-model h1, ytd-playlist-header-renderer h1, #page-header h1'
+        )?.textContent?.trim() || null;
+      } catch (_) {}
+      if (!playlistTitle) {
+        playlistTitle = document.title.replace(/\s*[-–—]\s*YouTube\s*$/i, '').trim() || playlistId;
+      }
+
+      const numberFiles = numCheck.checked;
+      const dlOpts = { folder: playlistTitle, numberFiles };
+
+      note.textContent = `${items.length}件 → ${playlistTitle}/ に保存`;
       label.textContent = '開始';
 
       let ok = 0, fail = 0;
@@ -1270,7 +1297,7 @@ function mountPlaylist() {
       for (const item of items) {
         note.textContent = `${item.index}/${items.length}: ${item.title.slice(0, 40)}`;
         try {
-          await queuePlaylistItem(item.videoId, item.title);
+          await queuePlaylistItem(item.videoId, item.title, { ...dlOpts, index: item.index });
           ok++;
         } catch (e) {
           fail++;
@@ -1299,7 +1326,12 @@ function mountPlaylist() {
 }
 
 // プレイリスト動画1本分のフォーマットを取得してジョブを投げる
-async function queuePlaylistItem(videoId, title) {
+// opts: { folder: string|null, index: number|null, numberFiles: boolean }
+async function queuePlaylistItem(videoId, title, opts = {}) {
+  const fileOpts = {};
+  if (opts.folder) fileOpts.folder = opts.folder;
+  if (opts.numberFiles && opts.index != null) fileOpts.index = opts.index;
+
   const formats = await fetchFormats(videoId);
   // progressive (muxed) を優先、無ければ映像+音声のペア
   const progressive = formats.filter(f => f.isMuxed && f.hasVideo && f.hasAudio);
@@ -1309,7 +1341,7 @@ async function queuePlaylistItem(videoId, title) {
       type: 'ocha:download',
       job: {
         videoTitle: title,
-        items: [{ kind: 'single', fmt: best, dlKind: 'muxed', trim: null }],
+        items: [{ kind: 'single', fmt: best, dlKind: 'muxed', trim: null, opts: fileOpts }],
         ctx: { videoId, visitorData: visitorData() },
         theme: document.documentElement.hasAttribute('dark') ? 'dark' : 'light'
       }
@@ -1333,7 +1365,7 @@ async function queuePlaylistItem(videoId, title) {
     type: 'ocha:download',
     job: {
       videoTitle: title,
-      items: [{ kind: 'mux', video, audio, trim: null }],
+      items: [{ kind: 'mux', video, audio, trim: null, opts: fileOpts }],
       ctx: { videoId, visitorData: visitorData() },
       theme: document.documentElement.hasAttribute('dark') ? 'dark' : 'light'
     }

@@ -443,8 +443,8 @@ globalThis.OchaDownload = (() => {
   }
 
   // ── download / mux orchestration ─────────────────────────
-  async function downloadFormat(fmt, videoTitle, kind, trim = null) {
-    const filename = buildFilename(videoTitle, fmt, kind, trim);
+  async function downloadFormat(fmt, videoTitle, kind, trim = null, opts = {}) {
+    const filename = buildFilename(videoTitle, fmt, kind, trim, opts);
     try {
       if (fmt.isMuxed && !trim) {
         chrome.downloads.download({ url: fmt.url, filename, saveAs: false }, () => {
@@ -478,7 +478,7 @@ globalThis.OchaDownload = (() => {
     }
   }
 
-  async function muxAndDownload(video, audio, videoTitle, els, trim = null) {
+  async function muxAndDownload(video, audio, videoTitle, els, trim = null, opts = {}) {
     if (!video || !audio) throw new Error('映像と音声の両方が必要です');
     if (video.isMuxed) throw new Error('選択中の映像は既に音声込みです（合成は不要）');
 
@@ -559,9 +559,9 @@ globalThis.OchaDownload = (() => {
     for (const it of items) {
       try {
         if (it.kind === 'mux') {
-          await muxAndDownload(it.video, it.audio, videoTitle, {}, it.trim);
+          await muxAndDownload(it.video, it.audio, videoTitle, {}, it.trim, it.opts || {});
         } else {
-          await downloadFormat(it.fmt, videoTitle, it.dlKind, it.trim);
+          await downloadFormat(it.fmt, videoTitle, it.dlKind, it.trim, it.opts || {});
         }
       } catch (e) {
         lastError = e;
@@ -642,15 +642,20 @@ globalThis.OchaDownload = (() => {
     return name.replace(/[\\/:*?"<>|]/g, '_').slice(0, 120);
   }
 
-  function buildFilename(videoTitle, fmt, kind = null, trim = null) {
-    const parts = [sanitize(videoTitle)];
+  function buildFilename(videoTitle, fmt, kind = null, trim = null, opts = {}) {
+    const parts = [];
+    // プレイリストのナンバリング (例: "001_")
+    if (opts.index != null) parts.push(String(opts.index).padStart(3, '0'));
+    parts.push(sanitize(videoTitle));
     if (kind) parts.push(kind);
     parts.push(sanitize(fmt.quality));
     if (fmt.fps && fmt.hasVideo) parts.push(`${fmt.fps}fps`);
     if (!fmt.hasVideo && fmt.hasAudio && fmt.language) {
       parts.push(fmt.language + (fmt.isOriginalAudio ? '-orig' : fmt.isDubbed ? '-dub' : ''));
     }
-    return `${parts.filter(Boolean).join('_')}${trimSuffix(trim)}.${fmt.ext}`;
+    const name = `${parts.filter(Boolean).join('_')}${trimSuffix(trim)}.${fmt.ext}`;
+    // プレイリストのフォルダ保存 (例: "プレイリスト名/001_タイトル_1080p.mp4")
+    return opts.folder ? `${sanitize(opts.folder)}/${name}` : name;
   }
 
   function isExpectedMediaType(contentType, fmt) {
