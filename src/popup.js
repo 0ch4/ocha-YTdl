@@ -1735,8 +1735,18 @@ async function fetchPlaylistItems(playlistId, tabId) {
         index: items.length + 1
       });
     }
+    // lockupViewModel (2025- の新レイアウト)
+    const lvm = node.lockupViewModel;
+    if (lvm?.contentId && lvm?.contentType === 'LOCKUP_CONTENT_TYPE_VIDEO' && !seen.has(lvm.contentId)) {
+      seen.add(lvm.contentId);
+      items.push({
+        videoId: lvm.contentId,
+        title: lvm?.metadata?.lockupMetadataViewModel?.title?.content || lvm.contentId,
+        index: items.length + 1
+      });
+    }
     for (const key of Object.keys(node)) {
-      if (key === 'playlistVideoRenderer' || key === 'gridVideoRenderer') continue;
+      if (key === 'playlistVideoRenderer' || key === 'gridVideoRenderer' || key === 'lockupViewModel') continue;
       walkPlaylistVideos(node[key], depth + 1);
     }
   }

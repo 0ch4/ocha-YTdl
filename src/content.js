@@ -250,6 +250,7 @@ async function fetchPlaylistItems(playlistId) {
   function walk(node, depth) {
     if (!node || typeof node !== 'object' || depth > 30) return;
     if (Array.isArray(node)) { for (const c of node) walk(c, depth + 1); return; }
+    // 旧レイアウト: playlistVideoRenderer
     const pvr = node.playlistVideoRenderer;
     if (pvr?.videoId && !seen.has(pvr.videoId)) {
       seen.add(pvr.videoId);
@@ -259,8 +260,18 @@ async function fetchPlaylistItems(playlistId) {
         index: items.length + 1
       });
     }
+    // 新レイアウト(2025-): lockupViewModel
+    const lvm = node.lockupViewModel;
+    if (lvm?.contentId && lvm?.contentType === 'LOCKUP_CONTENT_TYPE_VIDEO' && !seen.has(lvm.contentId)) {
+      seen.add(lvm.contentId);
+      items.push({
+        videoId: lvm.contentId,
+        title: lvm?.metadata?.lockupMetadataViewModel?.title?.content || lvm.contentId,
+        index: items.length + 1
+      });
+    }
     for (const key of Object.keys(node)) {
-      if (key === 'playlistVideoRenderer') continue;
+      if (key === 'playlistVideoRenderer' || key === 'lockupViewModel') continue;
       walk(node[key], depth + 1);
     }
   }
