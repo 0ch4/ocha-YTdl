@@ -1704,30 +1704,67 @@ async function fetchPlaylistItems(playlistId, tabId) {
   const data = result?.result;
   if (!data || data.error) throw new Error(data?.error || 'プレイリスト取得失敗');
 
-  // playlistVideoListRenderer の items から videoId / title を抽出
+  // YouTube の browse 応答は構造が多層で版によって変わる。
+  // 決まったパスを辿るより、playlistVideoRenderer を再帰的に探す方が確実。
   const items = [];
-  const sections = data?.contents?.twoColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents
-    || data?.contents?.sectionListRenderer?.contents
-    || [];
-  for (const section of sections) {
-    const listItems = section?.itemSectionRenderer?.contents?.[0]?.playlistVideoListRenderer?.items || [];
-    for (const li of listItems) {
-      const v = li?.playlistVideoRenderer;
-      if (!v?.videoId) continue;
+  const seen = new Set();
+
+  function walkPlaylistVideos(node, depth) {
+    if (!node || typeof node !== 'object' || depth > 30) return;
+    if (Array.isArray(node)) {
+      for (const child of node) walkPlaylistVideos(child, depth + 1);
+      return;
+    }
+    // playlistVideoRenderer
+    const pvr = node.playlistVideoRenderer;
+    if (pvr?.videoId && !seen.has(pvr.videoId)) {
+      seen.add(pvr.videoId);
       items.push({
-        videoId: v.videoId,
-        title: v?.title?.runs?.[0]?.text || v?.title?.simpleText || v.videoId,
+        videoId: pvr.videoId,
+        title: pvr?.title?.runs?.[0]?.text || pvr?.title?.simpleText || pvr.videoId,
         index: items.length + 1
       });
     }
+    // gridVideoRenderer (一部のレイアウト)
+    const gvr = node.gridVideoRenderer;
+    if (gvr?.videoId && !seen.has(gvr.videoId)) {
+      seen.add(gvr.videoId);
+      items.push({
+        videoId: gvr.videoId,
+        title: gvr?.title?.runs?.[0]?.text || gvr?.title?.simpleText || gvr.videoId,
+        index: items.length + 1
+      });
+    }
+    for (const key of Object.keys(node)) {
+      if (key === 'playlistVideoRenderer' || key === 'gridVideoRenderer') continue;
+      walkPlaylistVideos(node[key], depth + 1);
+    }
   }
 
-  // continuation がある場合は追加取得（最大3ページ = 約300件）
-  let token = null;
-  for (const section of sections) {
-    const cont = section?.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token;
-    if (cont) { token = cont; break; }
+  walkPlaylistVideos(data, 0);
+
+  // continuation トークンも再帰的に探す
+  function findContinuationToken(node, depth) {
+    if (!node || typeof node !== 'object' || depth > 30) return null;
+    if (Array.isArray(node)) {
+      for (const child of node) {
+        const t = findContinuationToken(child, depth + 1);
+        if (t) return t;
+      }
+      return null;
+    }
+    const cont = node.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token;
+    if (cont) return cont;
+    const next = node.continuationCommand?.token;
+    if (next) return next;
+    for (const key of Object.keys(node)) {
+      const t = findContinuationToken(node[key], depth + 1);
+      if (t) return t;
+    }
+    return null;
   }
+
+  let token = findContinuationToken(data, 0);
   let pages = 0;
   while (token && pages < 3) {
     pages++;
@@ -1754,23 +1791,8 @@ async function fetchPlaylistItems(playlistId, tabId) {
     });
     const md = more?.result;
     if (!md || md.error) break;
-    const contItems = md?.onResponseReceivedActions?.[0]?.appendContinuationItemsAction?.continuationItems
-      || md?.continuationContents?.playlistVideoListContinuation?.items
-      || [];
-    for (const li of contItems) {
-      const v = li?.playlistVideoRenderer;
-      if (!v?.videoId) continue;
-      items.push({
-        videoId: v.videoId,
-        title: v?.title?.runs?.[0]?.text || v?.title?.simpleText || v.videoId,
-        index: items.length + 1
-      });
-    }
-    token = null;
-    for (const li of contItems) {
-      const cont = li?.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token;
-      if (cont) { token = cont; break; }
-    }
+    walkPlaylistVideos(md, 0);
+    token = findContinuationToken(md, 0);
   }
 
   return items;

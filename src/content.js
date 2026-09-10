@@ -43,6 +43,14 @@ function currentVideoId() {
   return shorts ? shorts[1] : null;
 }
 
+function currentPlaylistId() {
+  return new URL(location.href).searchParams.get('list');
+}
+
+function isPlaylistPage() {
+  return new URL(location.href).pathname === '/playlist';
+}
+
 // Shorts は DOM の作りが別物なので、watch 用の差し込みを流用できない。
 // SPA なので location だけが確実な判定材料（watch の DOM は隠れたまま残る）。
 function isWatchPage() {
@@ -214,6 +222,81 @@ function visitorData() {
     return _visitorData;
   }
   return null;
+}
+
+// ─── プレイリスト取得 ─────────────────────────────────────
+// youtube.com 上の same-origin なので CORS 問題なし。browse API を直接叩く。
+async function fetchPlaylistItems(playlistId) {
+  const cfg = CFG();
+  const apiKey = cfg?.defaultInnertubeApiKey;
+  const clientVersion = cfg?.defaultWebClientVersion;
+  if (!apiKey) throw new Error('API key not found');
+
+  const body = {
+    context: { client: { clientName: 'WEB', clientVersion, hl: 'ja', gl: 'JP' } },
+    browseId: 'VL' + playlistId
+  };
+
+  const resp = await fetch(
+    `https://www.youtube.com/youtubei/v1/browse?key=${encodeURIComponent(apiKey)}&prettyPrint=false`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+  );
+  const data = await resp.json();
+  if (!data || data.error) throw new Error(data?.error?.message || 'プレイリスト取得失敗');
+
+  const items = [];
+  const seen = new Set();
+
+  function walk(node, depth) {
+    if (!node || typeof node !== 'object' || depth > 30) return;
+    if (Array.isArray(node)) { for (const c of node) walk(c, depth + 1); return; }
+    const pvr = node.playlistVideoRenderer;
+    if (pvr?.videoId && !seen.has(pvr.videoId)) {
+      seen.add(pvr.videoId);
+      items.push({
+        videoId: pvr.videoId,
+        title: pvr?.title?.runs?.[0]?.text || pvr?.title?.simpleText || pvr.videoId,
+        index: items.length + 1
+      });
+    }
+    for (const key of Object.keys(node)) {
+      if (key === 'playlistVideoRenderer') continue;
+      walk(node[key], depth + 1);
+    }
+  }
+
+  function findToken(node, depth) {
+    if (!node || typeof node !== 'object' || depth > 30) return null;
+    if (Array.isArray(node)) { for (const c of node) { const t = findToken(c, depth + 1); if (t) return t; } return null; }
+    const t = node.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token;
+    if (t) return t;
+    for (const key of Object.keys(node)) { const t2 = findToken(node[key], depth + 1); if (t2) return t2; }
+    return null;
+  }
+
+  walk(data, 0);
+  let token = findToken(data, 0);
+  let pages = 0;
+  while (token && pages < 3) {
+    pages++;
+    const r = await fetch(
+      `https://www.youtube.com/youtubei/v1/browse?key=${encodeURIComponent(apiKey)}&prettyPrint=false`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          context: { client: { clientName: 'WEB', clientVersion, hl: 'ja', gl: 'JP' } },
+          continuation: token
+        })
+      }
+    );
+    const md = await r.json();
+    if (!md || md.error) break;
+    walk(md, 0);
+    token = findToken(md, 0);
+  }
+
+  return items;
 }
 
 async function fetchFormats(videoId) {
@@ -1024,6 +1107,15 @@ let _lastKind = null;
 
 async function init() {
   const videoId = currentVideoId();
+
+  // プレイリスト専用ページ（/playlist?list=...）
+  if (isPlaylistPage()) {
+    unmount();
+    _lastKind = 'playlist';
+    mountPlaylist();
+    return;
+  }
+
   if (!videoId) { unmount(); return; }
 
   // watch と Shorts で差し込み先が違うので、種別が変わったら作り直す
@@ -1046,6 +1138,11 @@ async function init() {
 // 差し込んだ要素ごと巻き添えで消える。一度置いて終わりにすると「リロードしないと
 // ボタンが出ない」状態になるので、消えていたら置き直し続ける。
 function ensureMounted() {
+  // プレイリストページは mountPlaylist が独自の差し込み先を使う
+  if (isPlaylistPage()) {
+    if (!document.getElementById(PLAYLIST_HOST_ID)) mountPlaylist();
+    return;
+  }
   // watch と Shorts では差し込み先が別物。ページ種別が変わったら、前の場所に
   // 居座らせず作り直す（watch の DOM は Shorts でも隠れて残るため）。
   if (!isWatchPage() && !isShortsPage()) { unmount(); return; }
@@ -1092,3 +1189,126 @@ init();
 // セーフティネットは初期化の成否に関わらず必ず起動する。init が videoId 無しで
 // 早期リターンしても、あとから SPA 遷移で watch/shorts に移れば ensureMounted が拾う。
 watchForRemount();
+
+// ─── プレイリスト一括ダウンロード ─────────────────────────
+// /playlist ページに「全件保存」ボタンを差し込む。
+// youtube.com 上の same-origin なので browse API / player API は直接叩ける。
+// ダウンロード本体は既存の background → popup.html?job= のワーカーに委譲する。
+
+const PLAYLIST_HOST_ID = 'ocha-ytdl-playlist-host';
+
+function mountPlaylist() {
+  if (document.getElementById(PLAYLIST_HOST_ID)) return;
+
+  const playlistId = currentPlaylistId();
+  if (!playlistId) return;
+
+  // 差し込み先: プレイリストヘッダーのアクション行を探す
+  // #page-header-container か ytd-playlist-header-renderer の actions 領域
+  let anchor = null;
+  for (const sel of [
+    'ytd-playlist-header-renderer #actions',
+    'ytd-playlist-header-renderer .metadata-actions-container',
+    '#page-header-container #actions',
+    'ytd-browse[page-subtype="playlist"] #header #actions'
+  ]) {
+    anchor = document.querySelector(sel);
+    if (anchor) break;
+  }
+  if (!anchor) return; // DOM 未整備。次回 ensureMounted で再試行
+
+  const host = el('div', { id: PLAYLIST_HOST_ID }, 'display:inline-flex;align-items:center;gap:8px;margin-left:8px;');
+  const root = host.attachShadow({ mode: 'open' });
+  hosts.add(host);
+  root.appendChild(styleSheet());
+
+  const button = el('button', { type: 'button', className: 'pill' });
+  button.appendChild(cutIcon());
+  const label = el('span', { textContent: '全件保存' });
+  button.appendChild(label);
+  root.appendChild(button);
+  root.appendChild(buildMaintenanceDot('margin-left:4px;'));
+  applyMaintenanceNotice();
+
+  const note = el('div', { textContent: '' },
+    `${YT_FONT}font-size:11px;color:${YT_DIM};margin-top:4px;white-space:nowrap;`);
+  root.appendChild(note);
+
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    label.textContent = '準備中';
+    note.textContent = 'プレイリストを読み込み中...';
+    try {
+      const items = await fetchPlaylistItems(playlistId);
+      if (!items.length) throw new Error('動画が見つかりませんでした');
+      note.textContent = `${items.length}件の動画を順次保存します`;
+      label.textContent = '開始';
+
+      let ok = 0, fail = 0;
+      for (const item of items) {
+        note.textContent = `${item.index}/${items.length}: ${item.title.slice(0, 40)}`;
+        try {
+          await queuePlaylistItem(item.videoId, item.title);
+          ok++;
+        } catch (e) {
+          fail++;
+          console.warn('[ytdl] playlist item failed:', item.videoId, e);
+        }
+        // レート制限回避
+        await new Promise(r => setTimeout(r, 600));
+      }
+      note.textContent = `完了: ${ok}件成功 / ${fail}件失敗`;
+      label.textContent = '全件保存';
+      button.disabled = false;
+    } catch (e) {
+      note.textContent = '失敗: ' + (e?.message || e);
+      label.textContent = '全件保存';
+      button.disabled = false;
+    }
+  });
+
+  anchor.appendChild(host);
+}
+
+// プレイリスト動画1本分のフォーマットを取得してジョブを投げる
+async function queuePlaylistItem(videoId, title) {
+  const formats = await fetchFormats(videoId);
+  // progressive (muxed) を優先、無ければ映像+音声のペア
+  const progressive = formats.filter(f => f.isMuxed && f.hasVideo && f.hasAudio);
+  if (progressive.length) {
+    const best = progressive.sort((a, b) => (b.height || 0) - (a.height || 0))[0];
+    const res = await chrome.runtime.sendMessage({
+      type: 'ocha:download',
+      job: {
+        videoTitle: title,
+        items: [{ kind: 'single', fmt: best, dlKind: 'muxed', trim: null }],
+        ctx: { videoId, visitorData: visitorData() },
+        theme: document.documentElement.hasAttribute('dark') ? 'dark' : 'light'
+      }
+    });
+    if (!res?.ok) throw new Error(res?.error || 'ジョブ送出失敗');
+    return;
+  }
+
+  // adaptive: 映像+音声を選んで mux
+  const video = formats.filter(f => f.hasVideo && !f.hasAudio)
+    .sort((a, b) => (b.height || 0) - (a.height || 0) || (a.ext === 'mp4' ? -1 : 1))[0];
+  const audio = formats.filter(f => f.hasAudio && !f.hasVideo)
+    .sort((a, b) => {
+      const ap = (a.ext === 'm4a' || a.ext === 'mp4') ? 0 : 1;
+      const bp = (b.ext === 'm4a' || b.ext === 'mp4') ? 0 : 1;
+      return ap - bp || b.bitrate - a.bitrate;
+    })[0];
+  if (!video || !audio) throw new Error('フォーマット不足');
+
+  const res = await chrome.runtime.sendMessage({
+    type: 'ocha:download',
+    job: {
+      videoTitle: title,
+      items: [{ kind: 'mux', video, audio, trim: null }],
+      ctx: { videoId, visitorData: visitorData() },
+      theme: document.documentElement.hasAttribute('dark') ? 'dark' : 'light'
+    }
+  });
+  if (!res?.ok) throw new Error(res?.error || 'ジョブ送出失敗');
+}
