@@ -4,107 +4,62 @@
   <meta charset="utf-8">
   <title>ocha-YTdl</title>
   <style>
-    /* 既定は YouTube ダーク。この popup は YouTube ページ上で開くことが前提の最終
-       フォールバックなので、ツールバーから開いた時もページに合わせるために
-       popup.js が active tab の <html dark> を検出して data-yt-theme を載せる。
-       値は実機の YouTube から採取したもの。 */
+    /* YouTube の実機から採取したトークン。content.js の THEME と同じ値。
+       popup.js が active tab の <html dark> を検出して data-yt-theme を載せる。 */
     :root, :root[data-yt-theme="dark"] {
       --bg: #0f0f0f;
       --surface: #212121;
       --surface-2: #272727;
       --surface-3: #303030;
+      --additive: rgba(255,255,255,.1);
+      --hover: rgba(255,255,255,.2);
+      --wash: rgba(255,255,255,.05);
+      --rim: rgba(255,255,255,.1);
       --border: #303030;
-      --border-strong: #3f3f3f;
       --text: #f1f1f1;
       --muted: #aaa;
       --dim: #909090;
-      --accent: #3ea6ff;         /* YouTube の call-to-action */
-      --accent-soft: #6ac1ff;
-      --accent-deep: #2b8ff0;
+      --accent: #3ea6ff;
+      --accent-text: #3ea6ff;
       --gold: #fbc02d;
       --err: #ff4e45;
       --on-accent: #0f0f0f;
-      --r: 11px; --r-md: 8px; --r-sm: 6px;
       --ring: 0 0 0 2px rgba(62, 166, 255, 0.32);
       --ease: cubic-bezier(0.32, 0.08, 0.24, 1);
+      --menu-bg: #212121;
+      --menu-fg: #f1f1f1;
     }
     :root[data-yt-theme="light"] {
       --bg: #fff;
       --surface: #f9f9f9;
       --surface-2: #f2f2f2;
       --surface-3: #e5e5e5;
+      --additive: rgba(0,0,0,.05);
+      --hover: rgba(0,0,0,.1);
+      --wash: rgba(255,255,255,.2);
+      --rim: rgba(0,0,0,.05);
       --border: #e5e5e5;
-      --border-strong: #ccc;
       --text: #0f0f0f;
       --muted: #606060;
       --dim: #909090;
       --accent: #065fd4;
-      --accent-soft: #2f7bd4;
-      --accent-deep: #0b52a6;
+      --accent-text: #065fd4;
       --gold: #b38600;
       --err: #d93025;
       --on-accent: #fff;
-      --r: 11px; --r-md: 8px; --r-sm: 6px;
       --ring: 0 0 0 2px rgba(6, 95, 212, 0.32);
       --ease: cubic-bezier(0.32, 0.08, 0.24, 1);
-    }
-
-    /* ダウンロード専用ウィンドウ。進捗バーと処理名だけを見せる。 */
-    body.worker {
-      padding: 16px 18px;
-    }
-    body.worker #status {
-      /* 動画タイトル。長いので2行で切る */
-      font-size: 13px;
-      color: var(--muted);
-      line-height: 1.4;
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
-      margin: 0;
-    }
-    body.worker #mux-progress {
-      /* 処理名がこのウィンドウの主役 */
-      font-size: 14px;
-      font-weight: 500;
-      color: var(--text);
-      margin: 0;
-      font-variant-numeric: tabular-nums;
-    }
-
-    /* YouTube 風の進捗バー。ワーカー時だけ出す。 */
-    #job-progress {
-      display: none;
-      height: 4px;
-      border-radius: 2px;
-      background: var(--surface-3);
-      overflow: hidden;
-      margin: 10px 0 8px;
-    }
-    #job-progress > i {
-      display: block;
-      height: 100%;
-      width: 0;
-      background: #f03;                 /* YouTube の赤 */
-      transition: width 0.2s var(--ease);
-    }
-    #job-progress.indeterminate > i {
-      width: 40%;
-      animation: job-slide 1.1s var(--ease) infinite;
-    }
-    @keyframes job-slide {
-      0%   { transform: translateX(-100%); }
-      100% { transform: translateX(350%); }
+      --menu-bg: #fff;
+      --menu-fg: #0f0f0f;
     }
 
     *, *::before, *::after { box-sizing: border-box; }
 
     body {
-      width: 360px;
+      width: 380px;
       margin: 0;
-      padding: 12px 14px 14px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      padding: 12px 16px 16px;
+      font-family: Roboto, "Arial", sans-serif;
       font-size: 13px;
       line-height: 1.45;
       color: var(--text);
@@ -112,12 +67,101 @@
       -webkit-font-smoothing: antialiased;
     }
 
+    /* ── ワーカーウィンドウ ────────────────────────────── */
+    body.worker { padding: 16px 18px; }
+    body.worker #status {
+      font-size: 13px; color: var(--muted); line-height: 1.4;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+      overflow: hidden; margin: 0;
+    }
+    body.worker #mux-progress {
+      font-size: 14px; font-weight: 500; color: var(--text);
+      margin: 0; font-variant-numeric: tabular-nums;
+    }
+
+    /* YouTube 風の進捗バー（赤） */
+    #job-progress {
+      display: none; height: 4px; border-radius: 2px;
+      background: var(--surface-3); overflow: hidden; margin: 10px 0 8px;
+    }
+    #job-progress > i {
+      display: block; height: 100%; width: 0;
+      background: #f03; transition: width 0.2s var(--ease);
+    }
+    #job-progress.indeterminate > i {
+      width: 40%; animation: job-slide 1.1s var(--ease) infinite;
+    }
+    @keyframes job-slide {
+      0%   { transform: translateX(-100%); }
+      100% { transform: translateX(350%); }
+    }
+
+    /* ── tonal ボタン（content.js の .pill/.chip と同じ wash+rim） ── */
+    .tonal {
+      position: relative; overflow: hidden;
+      display: inline-flex; align-items: center; justify-content: center;
+      border: 0; cursor: pointer;
+      font-family: inherit; font-weight: 500;
+      color: var(--text);
+      background: var(--additive);
+      transition: background-color 0.1s ease;
+    }
+    .tonal::before {
+      content: ""; position: absolute; left: 0; bottom: 50%;
+      width: 100%; height: 100%; border-radius: inherit;
+      background: var(--wash); filter: blur(10px); pointer-events: none;
+    }
+    .tonal::after {
+      content: ""; position: absolute; inset: 0; border-radius: inherit;
+      padding: 0.5px;
+      background: linear-gradient(var(--rim), transparent 75%);
+      mask: linear-gradient(#fff 0, #fff 0) content-box exclude,
+            linear-gradient(#fff 0, #fff 0) exclude;
+      pointer-events: none;
+    }
+    .tonal:hover, .tonal:focus-visible { background: var(--hover); }
+    .tonal:disabled { opacity: .5; cursor: default; background: var(--additive); }
+
+    /* chip サイズ（32px高, radius 16px） — content.js の .chip と同じ */
+    .chip {
+      height: 32px; border-radius: 16px; padding: 0 14px;
+      font-size: 13px;
+    }
+    /* ghost — 透明背景のテキストボタン */
+    .ghost {
+      height: 32px; border-radius: 16px; padding: 0 12px;
+      font-size: 13px; font-weight: 400;
+      background: transparent; color: var(--muted);
+      border: 0; cursor: pointer; font-family: inherit;
+      transition: background-color 0.1s ease;
+    }
+    .ghost:hover, .ghost:focus-visible { background: var(--hover); }
+    .ghost:disabled { opacity: .5; cursor: default; }
+
+    /* filled — YouTube の主要 CTA（登録ボタン等）と同じ白地 */
+    .filled {
+      height: 36px; border-radius: 18px; padding: 0 16px;
+      font-size: 13px; font-weight: 500;
+      background: #fff; color: #0f0f0f;
+      border: 0; cursor: pointer; font-family: inherit;
+      display: inline-flex; align-items: center; justify-content: center;
+      transition: background-color 0.1s ease, opacity 0.1s ease;
+    }
+    .filled:hover { background: #d9d9d9; }
+    .filled:active { background: #b3b3b3; }
+    .filled:disabled { background: var(--surface-2); color: var(--dim); cursor: default; }
+    :root[data-yt-theme="light"] .filled {
+      background: #0f0f0f; color: #fff;
+    }
+    :root[data-yt-theme="light"] .filled:hover { background: #333; }
+    :root[data-yt-theme="light"] .filled:active { background: #555; }
+
     /* ── header / brand ───────────────────────────────── */
-    header { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
+    header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
     .brand { display: inline-flex; align-items: center; gap: 8px; }
     .brand-mark {
       width: 22px; height: 22px; border-radius: 7px;
-      background: var(--accent);
+      background: #8fb37c;
       display: inline-flex; align-items: center; justify-content: center;
       flex: 0 0 auto;
     }
@@ -148,11 +192,11 @@
     .hero {
       display: grid; grid-template-columns: 124px 1fr; gap: 11px; align-items: start;
       margin-bottom: 12px; padding: 11px;
-      border: 1px solid var(--border); border-radius: var(--r);
-      background: var(--surface);
+      border-radius: 12px;
+      background: var(--additive);
     }
     .hero-thumb {
-      position: relative; overflow: hidden; border-radius: var(--r-md);
+      position: relative; overflow: hidden; border-radius: 8px;
       background: #14160f; width: 124px; height: 70px; flex: 0 0 auto;
     }
     .hero-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -164,23 +208,22 @@
     }
     .hero-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
     #video-title {
-      font-size: 14.5px; font-weight: 600; color: var(--text); line-height: 1.4;
+      font-size: 14px; font-weight: 500; color: var(--text); line-height: 1.4;
       display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
     }
-    #video-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--muted); font-size: 10.5px; min-height: 16px; }
+    #video-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--muted); font-size: 11px; min-height: 16px; }
     .meta-chip { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
     .meta-chip + .meta-chip::before { content: '·'; margin-right: 6px; color: var(--dim); }
 
     /* ── status banners ───────────────────────────────── */
     #nsig-status, #pot-status, #maintenance-status {
-      display: none; font-size: 10.5px; padding: 6px 9px; border-radius: var(--r-sm);
+      display: none; font-size: 11px; padding: 6px 10px; border-radius: 8px;
       margin-bottom: 8px; line-height: 1.4; white-space: pre-wrap; word-break: break-word;
-      border: 1px solid transparent;
     }
-    .nsig-ok, .pot-ok { background: rgba(143, 179, 124, 0.1); border-color: rgba(143, 179, 124, 0.24); color: var(--accent); }
-    .nsig-fail, .maint-critical { background: rgba(207, 139, 126, 0.1); border-color: rgba(207, 139, 126, 0.26); color: var(--err); }
-    .pot-warn, .maint-warn { background: rgba(201, 180, 122, 0.1); border-color: rgba(201, 180, 122, 0.26); color: var(--gold); }
-    .maint-info { background: rgba(94, 128, 72, 0.12); border-color: rgba(94, 128, 72, 0.28); color: var(--accent); }
+    .nsig-ok, .pot-ok { background: rgba(143, 179, 124, 0.1); color: var(--accent-text); }
+    .nsig-fail, .maint-critical { background: rgba(207, 139, 126, 0.1); color: var(--err); }
+    .pot-warn, .maint-warn { background: rgba(201, 180, 122, 0.1); color: var(--gold); }
+    .maint-info { background: rgba(94, 128, 72, 0.12); color: var(--accent-text); }
     #maintenance-actions { display: none; grid-template-columns: 1fr 1fr; gap: 7px; margin: -2px 0 8px; }
 
     #status { font-size: 12px; color: var(--muted); padding: 8px 2px; }
@@ -189,88 +232,57 @@
     /* ── picker ───────────────────────────────────────── */
     #quality-picker {
       display: none; grid-template-columns: 1fr; gap: 10px; margin-bottom: 12px;
-      padding: 0;
     }
-    .picker-heading { margin: 0; color: var(--muted); font-size: 12.5px; font-weight: 600; letter-spacing: 0; }
+    .picker-heading { margin: 0; color: var(--muted); font-size: 12px; font-weight: 500; }
     .picker-row { display: grid; grid-template-columns: 1fr; gap: 5px; }
     .picker-filters { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 7px; }
     .picker-actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 7px; }
-    .picker-label { color: var(--muted); font-size: 10px; font-weight: 600; }
+    .picker-label { color: var(--muted); font-size: 11px; font-weight: 500; }
 
-    .picker-select, .trim-input {
-      width: 100%; min-width: 0; appearance: none; -webkit-appearance: none;
-      background: var(--surface-2); color: var(--text);
-      border: 1px solid var(--border); border-radius: var(--r-sm);
-      padding: 7px 9px; font-size: 12px; font-family: inherit;
-      transition: border-color 0.12s, box-shadow 0.12s;
-    }
+    /* select — content.js の .sel と同じチップ形状 */
     .picker-select {
-      padding-right: 26px;
-      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%23948C7E' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></svg>");
-      background-repeat: no-repeat; background-position: right 9px center;
+      width: 100%; min-width: 0; appearance: none; -webkit-appearance: none;
+      height: 32px; border: 0; border-radius: 16px; padding: 0 28px 0 12px;
+      background: var(--additive); color: var(--text);
+      font-size: 12px; font-weight: 500; font-family: inherit; cursor: pointer;
+      transition: background-color 0.1s ease;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%23909090' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+      background-repeat: no-repeat; background-position: right 10px center;
     }
-    .picker-select:focus, .trim-input:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+    .picker-select:hover, .picker-select:focus-visible { background-color: var(--hover); outline: none; }
+    .picker-select:disabled { opacity: .5; cursor: default; }
+    .picker-select option {
+      background: var(--menu-bg); color: var(--menu-fg);
+    }
+
+    /* trim input — select と同じチップ形状 */
+    .trim-input {
+      width: 100%; min-width: 0;
+      height: 32px; border: 0; border-radius: 16px; padding: 0 12px;
+      background: var(--additive); color: var(--text);
+      font-size: 12px; font-family: inherit;
+      transition: background-color 0.1s ease;
+    }
+    .trim-input:focus { outline: none; background: var(--hover); box-shadow: var(--ring); }
+    .trim-input::placeholder { color: var(--dim); }
     .trim-inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
     .trim-range-input { grid-column: 1 / -1; }
-    .trim-input::placeholder { color: var(--dim); }
-
-    .picker-btn {
-      background: var(--surface-2); color: var(--text);
-      border: 1px solid var(--border-strong); border-radius: var(--r-sm);
-      padding: 8px; font-size: 11px; font-weight: 600; cursor: pointer;
-      transition: background 0.16s var(--ease), border-color 0.16s var(--ease), color 0.16s var(--ease);
-    }
-    .picker-btn:hover { background: var(--surface-3); border-color: var(--accent-deep); color: var(--accent-soft); }
-    .picker-btn:active { background: #2b302a; }
-    .picker-btn:disabled { background: var(--surface); color: var(--dim); border-color: var(--border); cursor: not-allowed; }
-
-    #download-mux-selected {
-      width: 100%; padding: 10px; font-size: 12px; font-weight: 700; color: var(--on-accent);
-      background: var(--accent); border: none;
-    }
-    #download-mux-selected:hover { background: var(--accent-soft); }
-    #download-mux-selected:active { background: var(--accent-deep); }
-    #download-mux-selected:disabled { background: var(--surface-2); color: var(--dim); }
-
-    #quality-note, #format-debug {
-      display: none; color: var(--dim); font-size: 10px; line-height: 1.4;
-      margin: -2px 0 8px; white-space: pre-wrap; word-break: break-word;
-    }
-    #mux-progress { display: none; color: var(--accent); font-size: 11px; line-height: 1.4; margin: 2px 0 8px; font-variant-numeric: tabular-nums; }
 
     /* ── sections / format list ───────────────────────── */
     .section { display: none; margin-bottom: 11px; }
-    .section-label { font-size: 12.5px; font-weight: 600; color: var(--muted); letter-spacing: 0; margin-bottom: 7px; }
+    .section-label { font-size: 12px; font-weight: 500; color: var(--muted); margin-bottom: 7px; }
     .fmt-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
     .fmt-item {
       display: flex; align-items: center; justify-content: space-between; gap: 8px;
-      padding: 9px 4px; border-bottom: 1px solid var(--border);
-      transition: background 0.16s var(--ease);
+      padding: 8px 4px; border-bottom: 1px solid var(--border);
+      transition: background 0.1s ease;
     }
     .fmt-item:first-child { border-top: 1px solid var(--border); }
-    .fmt-item:hover { background: var(--surface); }
+    .fmt-item:hover { background: var(--additive); }
     .fmt-left { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-    .fmt-quality { font-weight: 600; font-size: 13px; color: var(--text); }
-    .fmt-meta { font-size: 10px; color: var(--dim); }
+    .fmt-quality { font-weight: 500; font-size: 13px; color: var(--text); }
+    .fmt-meta { font-size: 11px; color: var(--dim); }
     .fmt-actions { display: flex; gap: 6px; flex-shrink: 0; }
-
-    .copy-btn, .maint-btn {
-      background: var(--surface-2); color: var(--muted);
-      border: 1px solid var(--border); border-radius: var(--r-sm);
-      font-weight: 600; cursor: pointer; transition: background 0.12s, border-color 0.12s, color 0.12s;
-    }
-    .copy-btn { padding: 5px 9px; font-size: 10px; }
-    .maint-btn { padding: 7px 8px; font-size: 11px; }
-    .copy-btn:hover, .maint-btn:hover { background: var(--surface-3); color: var(--text); border-color: var(--border-strong); }
-
-    .dl-btn {
-      background: rgba(143, 179, 124, 0.13); color: var(--accent-soft);
-      border: 1px solid rgba(143, 179, 124, 0.3); border-radius: var(--r-sm);
-      padding: 5px 13px; font-size: 11px; font-weight: 700; cursor: pointer;
-      transition: background 0.16s var(--ease), color 0.16s var(--ease), border-color 0.16s var(--ease);
-    }
-    .dl-btn:hover { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
-    .dl-btn:active { background: var(--accent-deep); }
 
     hr.divider { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
 
@@ -308,8 +320,8 @@
   <div id="pot-status"></div>
   <div id="maintenance-status"></div>
   <div id="maintenance-actions">
-    <button class="maint-btn" id="open-update-guide">更新手順</button>
-    <button class="maint-btn" id="reload-extension">再読み込み</button>
+    <button class="tonal chip" id="open-update-guide">更新手順</button>
+    <button class="tonal chip" id="reload-extension">再読み込み</button>
   </div>
   <div id="status">読み込み中...</div>
   <div id="job-progress" aria-hidden="true"><i></i></div>
@@ -339,12 +351,12 @@
       </div>
     </div>
     <div class="picker-actions">
-      <button class="picker-btn" id="download-video-selected">映像DL</button>
-      <button class="picker-btn" id="download-audio-selected">音声DL</button>
-      <button class="picker-btn" id="download-pair-selected">両方DL</button>
+      <button class="tonal chip" id="download-video-selected">映像DL</button>
+      <button class="tonal chip" id="download-audio-selected">音声DL</button>
+      <button class="tonal chip" id="download-pair-selected">両方DL</button>
     </div>
     <div class="picker-row">
-      <button class="picker-btn" id="download-mux-selected">映像+音声を合成して保存</button>
+      <button class="filled" id="download-mux-selected">映像+音声を合成して保存</button>
     </div>
   </div>
   <div id="mux-progress"></div>

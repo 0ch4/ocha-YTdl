@@ -2123,12 +2123,18 @@ function buildItem(fmt, videoTitle) {
   actions.className = 'fmt-actions';
 
   const copyBtn = document.createElement('button');
-  copyBtn.className = 'copy-btn';
+  copyBtn.className = 'tonal chip';
+  copyBtn.style.fontSize = '11px';
+  copyBtn.style.padding = '0 10px';
   copyBtn.title = 'URLをコピー';
   copyBtn.textContent = 'コピー';
 
   const dlBtn = document.createElement('button');
-  dlBtn.className = 'dl-btn';
+  dlBtn.className = 'filled';
+  dlBtn.style.height = '32px';
+  dlBtn.style.borderRadius = '16px';
+  dlBtn.style.padding = '0 14px';
+  dlBtn.style.fontSize = '11px';
   dlBtn.textContent = 'DL';
 
   actions.append(copyBtn, dlBtn);
