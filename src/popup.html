@@ -327,6 +327,16 @@
   <div id="job-progress" aria-hidden="true"><i></i></div>
   <div id="error"></div>
 
+  <div id="playlist-section" style="display:none;margin-bottom:12px">
+    <div class="picker-heading" style="margin-bottom:6px">プレイリスト</div>
+    <div id="playlist-info" style="color:var(--muted);font-size:11px;margin-bottom:6px"></div>
+    <div style="display:flex;gap:7px;align-items:center">
+      <button class="tonal chip" id="playlist-fetch">一覧を取得</button>
+      <button class="filled" id="playlist-download" style="height:32px;border-radius:16px;padding:0 14px;font-size:12px" disabled>全件保存</button>
+    </div>
+    <div id="playlist-progress" style="display:none;color:var(--accent);font-size:11px;margin-top:6px"></div>
+  </div>
+
   <div id="quality-picker">
     <div class="picker-heading">品質選択</div>
     <div class="picker-filters">
@@ -380,10 +390,19 @@
     <ul class="fmt-list" id="list-audio"></ul>
   </div>
 
+  <div class="section" id="section-history">
+    <div class="section-label" style="display:flex;align-items:center;justify-content:space-between">
+      <span>最近の保存</span>
+      <button class="ghost" id="clear-history" style="height:24px;font-size:11px;padding:0 8px">履歴を消去</button>
+    </div>
+    <ul class="fmt-list" id="list-history"></ul>
+  </div>
+
   <iframe id="solver-iframe" src="/sandbox/solver.html" style="display:none"></iframe>
   <iframe id="muxer-iframe" src="/sandbox/muxer.html" style="display:none"></iframe>
   <script src="config/youtube.js"></script>
   <script src="shared/maintenance.js"></script>
+  <script src="worker/download.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

@@ -1,15 +1,13 @@
 const YOUTUBE_CONFIG = globalThis.OCHA_YTDL_YOUTUBE_CONFIG || {};
 const DEFAULT_INNERTUBE_API_KEY = YOUTUBE_CONFIG.defaultInnertubeApiKey || 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
 const DEFAULT_WEB_CLIENT_VERSION = YOUTUBE_CONFIG.defaultWebClientVersion || '2.20260114.08.00';
-const RANGE_CHUNK_SIZE = YOUTUBE_CONFIG.rangeChunkSize || (10 << 20); // 10MB — matches yt-dlp's CHUNK_SIZE
-const MUX_SOFT_LIMIT = 1100 * 1024 * 1024; // ~1.1GB 超: ffmpeg.wasm(wasm32)がヒープ確保に失敗(OOM)しやすい目安
 const UPDATE_GUIDE_URL = OchaMaintenance.UPDATE_GUIDE_URL;
 
 document.addEventListener('DOMContentLoaded', async () => {
   // ?job=ID で開かれた場合は「ダウンロード専用ウィンドウ」として動作し、
   // 通常のUI抽出フローはスキップ（popupを閉じてもDL/合成が継続するようにするため）。
   const jobId = new URLSearchParams(location.search).get('job');
-  if (jobId) { await runDownloadWorker(jobId); return; }
+  if (jobId) { await OchaDownload.runDownloadWorker(jobId); return; }
 
   const statusEl = document.getElementById('status');
   const errorEl  = document.getElementById('error');
@@ -68,16 +66,30 @@ document.addEventListener('DOMContentLoaded', async () => {
   await applyYtThemeFromTab(tab);
   const videoId = extractYouTubeVideoId(tab?.url);
   const isShorts = isShortsUrl(tab?.url);
-  _tabId = tab?.id ?? null; // PO Token をページMAIN worldで生成するのに使う
+  OchaDownload.setContext({ tabId: tab?.id ?? null }); // PO Token をページMAIN worldで生成するのに使う
 
   if (!isYoutubeUrl(tab?.url)) {
     statusEl.textContent = 'YouTubeを開いてください';
     return;
   }
 
-  if (!videoId) {
+  if (!videoId && !extractPlaylistId(tab?.url)) {
     statusEl.textContent = 'YouTubeの動画またはショート動画ページを開いてください';
     return;
+  }
+
+  // プレイリストページの検出
+  const playlistId = extractPlaylistId(tab?.url);
+  const isPlaylistPage = !videoId && playlistId;
+  if (isPlaylistPage) {
+    statusEl.style.display = 'none';
+    setupPlaylistUI(playlistId, tab);
+    return;
+  }
+
+  // 動画ページ + プレイリスト付き（&list=...）
+  if (videoId && playlistId && !isShorts) {
+    setupPlaylistUI(playlistId, tab);
   }
 
   statusEl.textContent = '動画情報を取得中...';
@@ -186,8 +198,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     pageGlobals.playerResponse = null;
   }
 
-  _visitorData = pageGlobals?.innertube?.visitorData || null;
-  _videoId = videoId;
+  OchaDownload.setContext({
+    visitorData: pageGlobals?.innertube?.visitorData || null,
+    videoId
+  });
   // PO Token は事前生成しない（tv経路は signatureTimestamp + Cookie で pot不要）。
   // 実際に 20MB超のDLで 403 になった時だけ遅延生成する（fetchRange 内）。
 
@@ -201,7 +215,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let playerFetchDebug = null;
   try {
     statusEl.textContent = '動画フォーマットを確認中...';
-    const fetchResult = await fetchInnertubePlayerResponses(videoId, pageGlobals?.innertube, statusEl, tab.id, _pot);
+    const fetchResult = await fetchInnertubePlayerResponses(videoId, pageGlobals?.innertube, statusEl, tab.id);
     apiPlayerResponse = fetchResult.responses;
     playerFetchDebug = fetchResult.debug;
   } catch (e) {
@@ -410,6 +424,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderSection('audio', audioOnly, title, 'divider-audio');
   renderFormatPicker(formats, title, pickerEls);
   renderFormatDebug(formatDebug, playerFetchDebug, formats, resolveStats);
+  renderHistory();
+
+  document.getElementById('clear-history')?.addEventListener('click', async () => {
+    await OchaDownload.clearHistory();
+    renderHistory();
+  });
 
   function showError(msg) {
     statusEl.style.display = 'none';
@@ -417,6 +437,49 @@ document.addEventListener('DOMContentLoaded', async () => {
     errorEl.textContent    = msg;
   }
 });
+
+async function renderHistory() {
+  const section = document.getElementById('section-history');
+  const list = document.getElementById('list-history');
+  if (!section || !list) return;
+  const items = await OchaDownload.getHistory();
+  if (!items.length) { section.style.display = 'none'; return; }
+  section.style.display = 'block';
+  list.replaceChildren();
+  for (const h of items.slice(0, 10)) {
+    const li = document.createElement('li');
+    li.className = 'fmt-item';
+    const left = document.createElement('div');
+    left.className = 'fmt-left';
+    const titleEl = document.createElement('span');
+    titleEl.className = 'fmt-quality';
+    titleEl.style.fontSize = '12px';
+    titleEl.style.overflow = 'hidden';
+    titleEl.style.textOverflow = 'ellipsis';
+    titleEl.style.whiteSpace = 'nowrap';
+    titleEl.style.maxWidth = '220px';
+    titleEl.textContent = h.title || h.filename || '';
+    const metaEl = document.createElement('span');
+    metaEl.className = 'fmt-meta';
+    const ago = formatAgo(h.ts);
+    metaEl.textContent = h.status === 'ok'
+      ? `${h.quality || ''} · ${ago}`
+      : `失敗: ${h.error || '不明'} · ${ago}`;
+    if (h.status !== 'ok') metaEl.style.color = 'var(--err)';
+    left.append(titleEl, metaEl);
+    li.append(left);
+    list.appendChild(li);
+  }
+}
+
+function formatAgo(ts) {
+  if (!ts) return '';
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return 'たった今';
+  if (s < 3600) return `${Math.floor(s / 60)}分前`;
+  if (s < 86400) return `${Math.floor(s / 3600)}時間前`;
+  return `${Math.floor(s / 86400)}日前`;
+}
 
 function isYoutubeUrl(url) {
   try {
@@ -1140,7 +1203,7 @@ function renderFormatPicker(formats, videoTitle, els) {
     if (!muxArmed) return;
     muxArmed = false;
     if (els.downloadMux) els.downloadMux.textContent = '映像+音声を合成して保存';
-    clearMuxProgress();
+    OchaDownload.clearMuxProgress();
   };
 
   els.resolutionSelect.addEventListener('change', () => { resetMuxArm(); updateVideoOptions(); });
@@ -1153,14 +1216,14 @@ function renderFormatPicker(formats, videoTitle, els) {
     const video = getSelectedFormat(els.videoSelect);
     const trim = getTrimRangeFromInputs(els);
     if (trim === false) return;
-    if (video) startDownload([{ kind: 'single', fmt: video, dlKind: video.isMuxed ? 'muxed' : 'video', trim }], videoTitle);
+    if (video) OchaDownload.startDownload([{ kind: 'single', fmt: video, dlKind: video.isMuxed ? 'muxed' : 'video', trim }], videoTitle);
   });
 
   els.downloadAudio.addEventListener('click', () => {
     const audio = getSelectedFormat(els.audioSelect);
     const trim = getTrimRangeFromInputs(els);
     if (trim === false) return;
-    if (audio) startDownload([{ kind: 'single', fmt: audio, dlKind: 'audio', trim }], videoTitle);
+    if (audio) OchaDownload.startDownload([{ kind: 'single', fmt: audio, dlKind: 'audio', trim }], videoTitle);
   });
 
   els.downloadPair.addEventListener('click', () => {
@@ -1171,7 +1234,7 @@ function renderFormatPicker(formats, videoTitle, els) {
     const items = [];
     if (video) items.push({ kind: 'single', fmt: video, dlKind: video.isMuxed ? 'muxed' : 'video', trim });
     if (audio && !video?.isMuxed) items.push({ kind: 'single', fmt: audio, dlKind: 'audio', trim });
-    if (items.length) startDownload(items, videoTitle);
+    if (items.length) OchaDownload.startDownload(items, videoTitle);
   });
 
   els.downloadMux.addEventListener('click', () => {
@@ -1179,17 +1242,17 @@ function renderFormatPicker(formats, videoTitle, els) {
     const audio = getSelectedFormat(els.audioSelect);
     const trim = getTrimRangeFromInputs(els);
     if (trim === false) return;
-    if (!video || !audio) { showPickerMessage('映像と音声の両方を選択してください', 'error'); return; }
-    if (video.isMuxed) { showPickerMessage('選択中の映像は既に音声込みです。合成は不要です。', 'error'); return; }
+    if (!video || !audio) { OchaDownload.showPickerMessage('映像と音声の両方を選択してください', 'error'); return; }
+    if (video.isMuxed) { OchaDownload.showPickerMessage('選択中の映像は既に音声込みです。合成は不要です。', 'error'); return; }
 
     // 大容量はffmpeg.wasmがOOMしやすい。だが alert/confirm はpopupを閉じてDL自体を不能にするので、
     // ブロッキングしないインライン2段階確認にする（1回目=警告表示, 2回目=実行）。
     const estTotal = (video.contentLength || 0) + (audio.contentLength || 0);
-    if (estTotal > MUX_SOFT_LIMIT && !muxArmed) {
+    if (estTotal > OchaDownload.MUX_SOFT_LIMIT && !muxArmed) {
       const mb = Math.round(estTotal / 1024 / 1024);
       muxArmed = true;
       els.downloadMux.textContent = `それでも合成して保存（約${mb}MB）`;
-      showPickerMessage(
+      OchaDownload.showPickerMessage(
         `⚠ 合計約${mb}MB。ブラウザのメモリ上限で合成が失敗する可能性があります。\n` +
         `映像/音声を個別にDLするか、低い解像度を推奨。もう一度押すと合成を試みます。`,
         'warn'
@@ -1198,8 +1261,8 @@ function renderFormatPicker(formats, videoTitle, els) {
     }
     muxArmed = false;
     els.downloadMux.textContent = '映像+音声を合成して保存';
-    clearMuxProgress();
-    startDownload([{ kind: 'mux', video, audio, trim }], videoTitle);
+    OchaDownload.clearMuxProgress();
+    OchaDownload.startDownload([{ kind: 'mux', video, audio, trim }], videoTitle);
   });
 
   els.qualityPicker.style.display = 'grid';
@@ -1254,7 +1317,7 @@ function getTrimRangeFromInputs(els) {
   const rangeRaw = els.trimRange?.value?.trim() || '';
   const rangeParts = rangeRaw ? parseTrimRangeText(rangeRaw) : null;
   if (rangeRaw && !rangeParts) {
-    showPickerMessage('切り出し範囲は 5-10、0:05~0:10、1:02:03-1:03:00 の形式で入力してください', 'error');
+    OchaDownload.showPickerMessage('切り出し範囲は 5-10、0:05~0:10、1:02:03-1:03:00 の形式で入力してください', 'error');
     return false;
   }
 
@@ -1265,11 +1328,11 @@ function getTrimRangeFromInputs(els) {
   const start = startRaw ? parseTimeInput(startRaw) : 0;
   const end = endRaw ? parseTimeInput(endRaw) : null;
   if (start == null || (end == null && endRaw)) {
-    showPickerMessage('切り出し範囲は 0:05 または 1:02:03 の形式で入力してください', 'error');
+    OchaDownload.showPickerMessage('切り出し範囲は 0:05 または 1:02:03 の形式で入力してください', 'error');
     return false;
   }
   if (end != null && end <= start) {
-    showPickerMessage('切り出し終了時刻は開始時刻より後にしてください', 'error');
+    OchaDownload.showPickerMessage('切り出し終了時刻は開始時刻より後にしてください', 'error');
     return false;
   }
   return {
@@ -1383,678 +1446,6 @@ function formatAudioOption(fmt) {
   const label = fmt.quality || 'audio';
   const track = audioTrackLabel(fmt);
   return [track, label, buildMeta(fmt)].filter(Boolean).join(' / ');
-}
-
-// ─── ダウンロードのウィンドウ委譲（popup を閉じても継続させる）────────────────────
-// MV3 のツールバー popup はフォーカスを失うと閉じ、実行中のJS(チャンクDL/合成)が中断する。
-// そこで「直DL以外」は独立ウィンドウ(popup.html?job=ID, type:'popup')に処理を移す。
-// 直DL(chrome.downloads で素のURL)はブラウザのDLマネージャが継続するのでその場で実行。
-
-function isDirectItem(item) {
-  return item.kind === 'single' && item.fmt.isMuxed && !item.trim;
-}
-
-function startDownload(items, videoTitle) {
-  if (items.every(isDirectItem)) {
-    // 全て直DL（ブラウザが継続管理）→ ウィンドウ不要、その場で実行
-    for (const it of items) downloadFormat(it.fmt, videoTitle, it.dlKind, it.trim);
-    return;
-  }
-  dispatchDownloadJob({ items, videoTitle });
-}
-
-async function dispatchDownloadJob(job) {
-  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  job.ctx = { tabId: _tabId, videoId: _videoId, visitorData: _visitorData };
-  try {
-    await chrome.storage.session.set({ ['ochaJob:' + id]: job });
-    await chrome.windows.create({
-      url: chrome.runtime.getURL('src/popup.html') + '?job=' + id,
-      type: 'popup',
-      width: 480,
-      height: 280,
-      focused: true
-    });
-  } catch (e) {
-    // ウィンドウを開けない環境ではその場で実行（旧挙動: popupを閉じると中断）
-    console.warn('[ytdl] download window dispatch failed, running inline:', e);
-    runJobItems(job.items, job.videoTitle).catch(err => {
-      console.warn('[ytdl] inline job failed:', err);
-      showPickerMessage(`ダウンロードに失敗しました: ${err && err.message || err}`, 'error');
-    });
-  }
-}
-
-async function runJobItems(items, videoTitle) {
-  let lastError = null;
-  for (const it of items) {
-    try {
-      if (it.kind === 'mux') {
-        await muxAndDownload(it.video, it.audio, videoTitle, {}, it.trim);
-      } else {
-        await downloadFormat(it.fmt, videoTitle, it.dlKind, it.trim);
-      }
-    } catch (e) {
-      lastError = e; // 各関数内で既に通知済み。残りのitemは続行する
-    }
-  }
-  if (lastError) throw lastError;
-}
-
-// ダウンロード専用ウィンドウ(?job=ID)の本体
-async function runDownloadWorker(jobId) {
-  const key = 'ochaJob:' + jobId;
-  const statusEl = document.getElementById('status');
-  // このウィンドウは進捗を見せるためだけに開く。ブランドも版もメンテ表示も要らない。
-  // 残すのは「今なにをしているか」と進捗バーだけ。
-  document.querySelector('.hero')?.style.setProperty('display', 'none');
-  document.querySelector('header')?.style.setProperty('display', 'none');
-  const hide = id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; };
-  ['maintenance-pill', 'nsig-status', 'pot-status', 'maintenance-status', 'maintenance-actions', 'quality-picker', 'format-debug', 'quality-note'].forEach(hide);
-  document.body.classList.add('worker');
-
-  let job = null;
-  try {
-    const stored = await chrome.storage.session.get(key);
-    job = stored[key];
-    chrome.storage.session.remove(key);
-  } catch (_) {}
-
-  if (!job || !Array.isArray(job.items)) {
-    if (statusEl) statusEl.textContent = 'ダウンロードジョブが見つかりませんでした';
-    return;
-  }
-
-  _tabId = job.ctx?.tabId ?? null;
-  _videoId = job.ctx?.videoId ?? null;
-  _visitorData = job.ctx?.visitorData ?? null;
-
-  // ワーカーは拡張ページなので YouTube の --yt-spec-* も <html dark> も見えない。
-  // どちらのテーマかはページ側が job に入れて渡してくる。
-  if (job.theme) document.documentElement.setAttribute('data-yt-theme', job.theme);
-
-  if (statusEl) statusEl.textContent = job.videoTitle || 'ダウンロード';
-  document.title = (job.videoTitle || 'download').slice(0, 60);
-
-  const bar = document.getElementById('job-progress');
-  if (bar) { bar.style.display = 'block'; bar.classList.add('indeterminate'); }
-
-  try {
-    await runJobItems(job.items, job.videoTitle);
-    if (bar) { bar.classList.remove('indeterminate'); bar.firstElementChild.style.width = '100%'; }
-    setMuxProgress('✓ 完了。まもなく閉じます');
-    setTimeout(() => window.close(), 2500);
-  } catch (e) {
-    if (bar) bar.style.display = 'none';
-    clearMuxProgress();
-    if (statusEl) statusEl.textContent = '失敗: ' + (e && e.message || e) + '（このウィンドウは自動で閉じます）';
-    // 失敗時もウィンドウを放置しない（理由を読めるよう長めの猶予）。手動でも閉じられる。
-    setTimeout(() => window.close(), 12000);
-  }
-}
-
-// blob を保存し、DL完了まで待つ（成功で resolve、失敗は理由付きで reject）。
-// ワーカーウィンドウは完了まで開いたまま＝blob URL が有効なうちに確実に書き込まれる。
-function saveBlob(blob, filename) {
-  return new Promise((resolve, reject) => {
-    const blobUrl = URL.createObjectURL(blob);
-    let settled = false;
-    let downloadId = null;
-
-    const done = (ok, reason) => {
-      if (settled) return;
-      settled = true;
-      chrome.downloads.onChanged.removeListener(onChanged);
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 8000);
-      if (ok) resolve(true);
-      else reject(new Error(reason || '保存に失敗しました'));
-    };
-
-    function onChanged(delta) {
-      if (delta.id !== downloadId || !delta.state) return;
-      if (delta.state.current === 'complete') done(true);
-      else if (delta.state.current === 'interrupted') done(false, '保存中断: ' + (delta.error?.current || '不明'));
-    }
-
-    chrome.downloads.download({ url: blobUrl, filename, saveAs: false }, (id) => {
-      if (chrome.runtime.lastError || id == null) {
-        done(false, chrome.runtime.lastError?.message || 'downloads API エラー');
-        return;
-      }
-      downloadId = id;
-      chrome.downloads.onChanged.addListener(onChanged);
-      // レース対策: onChanged 登録前に完了/中断していた場合を拾う
-      chrome.downloads.search({ id }, (items) => {
-        const it = items && items[0];
-        if (it?.state === 'complete') done(true);
-        else if (it?.state === 'interrupted') done(false, '保存中断: ' + (it.error || '不明'));
-      });
-    });
-  });
-}
-
-async function downloadFormat(fmt, videoTitle, kind, trim = null) {
-  try {
-    const filename = buildFilename(videoTitle, fmt, kind, trim);
-
-    // progressive/muxed (itag18 等) は素のGETに応答するので直DLでOK
-    if (fmt.isMuxed && !trim) {
-      chrome.downloads.download({ url: fmt.url, filename, saveAs: false }, () => {
-        if (chrome.runtime.lastError) {
-          console.warn('[ytdl] Download failed:', chrome.runtime.lastError.message, fmt);
-        }
-      });
-      return;
-    }
-
-    // adaptive(DASH) は部分レンジ必須（Rangeなし or 全体レンジは403）→ チャンクDL
-    const label = kind === 'audio' ? '音声' : '映像';
-    setMuxProgress(`${label}をダウンロード中...（ウィンドウを閉じないでください）`);
-    const bytes = await fetchFormatBytes(fmt, p => setMuxProgress(`${label}DL中... ${p}%（閉じないで）`));
-    const outputBytes = trim
-      ? await trimSingleStream(bytes, fmt, trim)
-      : bytes;
-    setMuxProgress('保存中...');
-
-    const blob = new Blob([outputBytes], { type: fmt.mimeType || 'application/octet-stream' });
-    await saveBlob(blob, filename);
-    clearMuxProgress();
-  } catch (e) {
-    clearMuxProgress();
-    console.warn('[ytdl] Download failed:', e, fmt);
-    throw e; // 失敗はワーカーウィンドウのステータスに表示される
-  }
-}
-
-// ─── chunked range download ─────────────────────────────────────────────────
-// gvs の adaptive URL は「厳密な部分レンジ」のみ200を返す。Rangeなしも全体レンジも403。
-// yt-dlp と同じく URL末尾に &range=START-END を付けた10MBチャンクで取得する。
-// 403/429 はレート制限なので、リクエストを増やさず指数バックオフで再試行する
-// （以前の「半分割リトライ」はリクエスト数を増やして制限を悪化させるため廃止）。
-
-// PO Token 取得の唯一の差し替え点。
-// これが無いと pot必須クライアントの adaptive は20MB以降が403になる。
-//
-// 【将来】自前サーバで pot provider を動かす場合は POT_PROVIDER_URL を設定するだけ。
-//   サーバは content_binding(visitorData) を受け取り {po_token} を返す
-//   （bgutil-ytdlp-pot-provider 互換のJSON）。
-// 【現状】ページが生成した pot を background.js が横取りして storage.session に保存。
-const POT_PROVIDER_URL = YOUTUBE_CONFIG.potProviderUrl || null; // 例: 'https://your-server.example/get_pot'
-
-let _pot = null;
-let _visitorData = null;
-let _videoId = null;
-let _tabId = null;
-let _lastPotError = null; // 直近のPO Token生成失敗理由（UIに表示する）
-
-let _potPromise = null;
-function ensurePot() {
-  if (_pot) return Promise.resolve(_pot);
-  if (_potPromise) return _potPromise; // 並列DL中の多重生成を防ぐ
-  _potPromise = _ensurePotOnce().finally(() => { _potPromise = null; });
-  return _potPromise;
-}
-
-async function _ensurePotOnce() {
-  if (_pot) return _pot;
-
-  // 1) 将来: 自前サーバの pot provider
-  if (POT_PROVIDER_URL) {
-    try {
-      const r = await fetch(POT_PROVIDER_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content_binding: _visitorData })
-      });
-      const j = await r.json();
-      if (j && j.po_token) { _pot = j.po_token; return _pot; }
-    } catch (e) {
-      console.warn('[ytdl] pot provider failed:', e);
-    }
-  }
-
-  // この _pot は GVS(googlevideo) ダウンロードURLに &pot= として付ける用途。
-  // GVS pot は visitorData にバインドされている必要がある（video_id バインドは player pot 用）。
-
-  // 2) 本命: ページが実再生で使った GVS pot を background.js が横取り保存したもの。
-  //    visitorData バインドの正真正銘の GVS pot なので最も確実（要・動画を数秒再生）。
-  try {
-    const { gvsPot } = await chrome.storage.session.get('gvsPot');
-    if (gvsPot) { _pot = gvsPot; return _pot; }
-  } catch (_) {}
-
-  // 3) フォールバック: ブラウザ内で WebPO を生成（住宅IP・BotGuardの最適環境）。
-  //    GVS 用なので visitorData にバインド（POT_PROVIDER の content_binding と同じ）。
-  try {
-    const t = await generatePoTokenInBrowser(_visitorData || _videoId || '');
-    if (t) { _pot = t; return _pot; }
-  } catch (e) {
-    console.warn('[ytdl] in-browser pot generation failed:', e);
-  }
-
-  return _pot;
-}
-
-// ─── in-browser PO Token 生成（bgutils-js を youtube.com ページの MAIN world で実行）──
-// sandbox だと BotGuard が「本物のブラウザでない」と判断して WebPO を出さない(PMD:Undefined)。
-// 本物の youtube.com ページ上(MAIN world)で実行すると、正しい環境・Cookie・Origin になり、
-// fetch も youtube origin 直なのでプロキシ不要・CORS問題も無い。
-// 唯一の懸念は MAIN world での new Function(eval) がページCSPに弾かれないか（弾かれたらエラーで判明）。
-
-async function generatePoTokenInBrowser(identifier) {
-  if (!_tabId) { _lastPotError = 'tabId 無し'; return null; }
-  try {
-    // 1) bgutils を MAIN world に注入（window.BG を立てる）
-    await chrome.scripting.executeScript({
-      target: { tabId: _tabId },
-      world: 'MAIN',
-      files: ['vendor/bgutils/bgutils.js']
-    });
-
-    // 2) MAIN world で WebPO を生成
-    const [res] = await chrome.scripting.executeScript({
-      target: { tabId: _tabId },
-      world: 'MAIN',
-      args: ['O43z0dpjhgX20SCx4KAo', identifier || ''],
-      func: async (requestKey, identifier) => {
-        try {
-          if (!window.BG) return { error: 'bgutils未ロード(window.BG無し)' };
-          const bgConfig = {
-            requestKey,
-            fetch: (u, o) => fetch(u, o),
-            globalObj: window,
-            identifier
-          };
-          const challenge = await window.BG.Challenge.create(bgConfig);
-          if (!challenge) return { error: 'challenge取得失敗' };
-          const js = challenge.interpreterJavascript
-            && challenge.interpreterJavascript.privateDoNotAccessOrElseSafeScriptWrappedValue;
-          if (!js) return { error: 'interpreter無し' };
-          // YouTube は Trusted Types を強制 → 文字列の eval/Function は弾かれる。
-          // default ポリシーを作れれば全 sink が透過する（VM内部の eval も含め最強）。
-          // 作れなければ named ポリシーで TrustedScript を作り eval に渡す。
-          let toScript = (s) => s;
-          let policyKind = 'none';
-          try {
-            if (window.trustedTypes && window.trustedTypes.createPolicy) {
-              let pol;
-              try {
-                pol = window.trustedTypes.createPolicy('default', { createScript: (s) => s, createScriptURL: (s) => s });
-                policyKind = 'default';
-              } catch (_) {
-                pol = window.trustedTypes.createPolicy('ocha-bg-' + Math.random().toString(36).slice(2), { createScript: (s) => s });
-                policyKind = 'named';
-              }
-              toScript = (s) => pol.createScript(s);
-            }
-          } catch (e) {
-            return { error: 'TTポリシー作成不可: ' + (e && e.message || e) };
-          }
-          try {
-            (0, eval)(toScript(js));
-          } catch (e) {
-            return { error: `eval失敗(policy=${policyKind}): ` + (e && e.message || e) };
-          }
-          const r = await window.BG.PoToken.generate({
-            program: challenge.program,
-            globalName: challenge.globalName,
-            bgConfig
-          });
-          return { poToken: r.poToken };
-        } catch (e) {
-          return { error: String(e && e.message || e) };
-        }
-      }
-    });
-
-    const out = res && res.result;
-    if (out && out.poToken) return out.poToken;
-    _lastPotError = ((out && out.error) || '不明') + ' [page]';
-    return null;
-  } catch (e) {
-    _lastPotError = 'executeScript失敗: ' + (e && e.message || e);
-    return null;
-  }
-}
-
-function rangedUrl(url, start, end, potFree) {
-  let u = url + (url.includes('?') ? '&' : '?') + `range=${start}-${end}`;
-  // pot不要ソース(android_vr/tv等)に無関係なpotを付けるとサーバに拒否される(403)ため、
-  // pot必須ソースの時だけ付与する。
-  if (!potFree && _pot && !/[?&]pot=/.test(u)) u += '&pot=' + encodeURIComponent(_pot);
-  return u;
-}
-
-const POT_FREE_LIMIT = 20 * 1024 * 1024; // pot無しで取得できる先頭バイト数
-
-async function fetchFormatBytes(fmt, onProgress) {
-  const total = fmt.contentLength || null;
-
-  // pot不要ソース(tv等)は20MBの壁なし＝そのままDL。pot必須ソース(iOS等)は
-  // WebPO pot が効かないので、20MB超なら pot不要の画質(tv)を選ぶよう促す。
-  if (!fmt.potFree && total && total > POT_FREE_LIMIT) {
-    throw new Error('この画質はPO Token必須クライアント由来でフルDLできません。別の画質（tv由来）を選んでください');
-  }
-
-  if (!total) {
-    const res = await fetchChunkWithTimeout(fmt.url, CHUNK_TIMEOUT_MS);
-    if (res.status !== 200 && res.status !== 206) throw new Error(`HTTP ${res.status}`);
-    return new Uint8Array(res.buf);
-  }
-
-  const chunkSize = Math.min(RANGE_CHUNK_SIZE, Math.max(1, Math.ceil(total / 2)));
-
-  // チャンク範囲を列挙し、複数同時に取得して高速化（ブラウザ同様の並列接続）。
-  const ranges = [];
-  for (let start = 0; start < total; start += chunkSize) {
-    ranges.push([start, Math.min(start + chunkSize, total) - 1]);
-  }
-
-  const out = new Uint8Array(total);
-  let done = 0;
-  let next = 0;
-  const CONCURRENCY = Math.min(4, ranges.length);
-
-  async function worker() {
-    while (next < ranges.length) {
-      const [s, e] = ranges[next++];
-      const part = await fetchRange(fmt, s, e);
-      out.set(part, s);
-      done += part.length;
-      if (onProgress) onProgress(Math.floor((done / total) * 100));
-    }
-  }
-
-  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
-
-  if (done !== total) throw new Error(`サイズ不一致: ${done}/${total}`);
-  return out;
-}
-
-const CHUNK_TIMEOUT_MS = 30000; // 応答なしの接続で Promise.all が永久に固まるのを防ぐ
-
-// fetch + arrayBuffer 読み取りをまとめて1つの AbortController で見張る。
-// ヘッダ受信後もボディ読み取りが固まるケースがあるため、タイマーはボディ読了までクリアしない。
-async function fetchChunkWithTimeout(url, timeoutMs) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const r = await fetch(url, { signal: controller.signal });
-    if (r.status === 200 || r.status === 206) {
-      const buf = await r.arrayBuffer();
-      return { status: r.status, contentType: r.headers.get('content-type') || '', buf };
-    }
-    return { status: r.status, contentType: '', buf: null };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function fetchRange(fmt, start, end) {
-  const backoffs = [0, 1000, 3000, 7000, 15000]; // 各試行前の待機(ms)
-  const MAX_POT_RETRIES = 2; // pot生成での同一チャンク再試行は高々これだけ（無限ループ防止）
-  let lastStatus = 0;
-  let triedPot = false;
-  let potRetries = 0;
-
-  for (let attempt = 0; attempt < backoffs.length; attempt++) {
-    if (backoffs[attempt]) await delay(backoffs[attempt]);
-    // fmt.url を毎回読み直す: 並列ワーカーの誰かが altUrls へ切り替えていれば
-    // このチャンクの再試行にもそれが反映される。
-    let res;
-    try {
-      res = await fetchChunkWithTimeout(rangedUrl(fmt.url, start, end, fmt.potFree), CHUNK_TIMEOUT_MS); // pot必須ソースの時だけ _pot があれば &pot= が付く
-    } catch (e) {
-      lastStatus = -1; // ネットワークエラー/タイムアウト(AbortError含む)
-      continue;
-    }
-
-    if (res.status === 200 || res.status === 206) {
-      if (!isExpectedMediaType(res.contentType, fmt)) throw new Error(`想定外のContent-Type: ${res.contentType || 'unknown'}`);
-      return new Uint8Array(res.buf);
-    }
-
-    lastStatus = res.status;
-
-    // 20MB超で403かつ未だpot未取得なら「必要になった時だけ」遅延生成して即再試行
-    // (pot不要ソースはpotを付けても無意味なので対象外。単なるレート制限として下のbackoffに任せる)
-    if (res.status === 403 && start >= POT_FREE_LIMIT && !_pot && !triedPot && !fmt.potFree) {
-      triedPot = true;
-      setMuxProgress('PO Tokenを生成中...');
-      await ensurePot();
-      clearMuxProgress();
-      // pot生成に失敗したまま(_pot===null)でも、potRetries上限を超えたら再試行を打ち切る
-      if (_pot && potRetries < MAX_POT_RETRIES) { potRetries++; attempt--; continue; }
-    }
-
-    // pot不要ソースが途中(数十MB)で壁に当たった場合(2026-08実測): 同itagの別クライアント
-    // 直URLが dedupeRawFormats で altUrls に積んであれば切り替えて即再試行する。
-    // fmt はワーカー間で共有されているので、一度の切替が他チャンクの再試行にも効く。
-    if ((res.status === 403 || res.status === 429) && fmt.potFree && Array.isArray(fmt.altUrls) && fmt.altUrls.length) {
-      const alt = fmt.altUrls.shift();
-      if (alt && alt.url && alt.url !== fmt.url) {
-        console.warn(`[ytdl] ${fmt.source}経路が${start}バイト付近で塞がれたため${alt.source}に切替`);
-        fmt.url = alt.url;
-        fmt.source = alt.source;
-        attempt--;
-        continue;
-      }
-    }
-
-    if (res.status !== 403 && res.status !== 429 && res.status < 500) break; // 恒久的エラーは即中断
-  }
-
-  let hint = '';
-  if (lastStatus === 403 && start >= POT_FREE_LIMIT && !fmt.potFree) {
-    hint = _pot
-      ? '（PO Tokenが無効/期限切れの可能性。YouTube動画を再生し直してから再試行してください）'
-      : '（PO Tokenが必要です。YouTube動画を数秒再生してから再試行してください）';
-  } else if (lastStatus === 403 || lastStatus === 429) {
-    hint = '（レート制限の可能性。数分待つか解像度を下げて再試行してください）';
-  }
-  throw new Error(`レンジ取得失敗 ${start}-${end}: HTTP ${lastStatus}${hint}`);
-}
-
-function delay(ms) {
-  return new Promise(res => setTimeout(res, ms));
-}
-
-// ─── mux (ffmpeg.wasm via sandbox) ──────────────────────────────────────────
-
-let _wasmBinary = null;
-
-async function getWasmBinary() {
-  if (_wasmBinary) return _wasmBinary;
-  const r = await fetch(chrome.runtime.getURL('vendor/ffmpeg/ffmpeg-core.wasm'));
-  if (!r.ok) throw new Error('ffmpeg-core.wasm の読み込みに失敗');
-  _wasmBinary = await r.arrayBuffer();
-  return _wasmBinary;
-}
-
-function muxerHandshake() {
-  const iframe = document.getElementById('muxer-iframe');
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      clearInterval(interval);
-      window.removeEventListener('message', onMsg);
-      reject(new Error('合成サンドボックスの起動に失敗しました'));
-    }, 5000);
-    const interval = setInterval(() => {
-      iframe?.contentWindow?.postMessage({ action: 'ping' }, '*');
-    }, 50);
-    function onMsg(e) {
-      if (e.data && e.data.action === 'pong') {
-        clearInterval(interval);
-        clearTimeout(timeout);
-        window.removeEventListener('message', onMsg);
-        resolve({ coreReady: !!e.data.coreReady, iframe });
-      }
-    }
-    window.addEventListener('message', onMsg);
-  });
-}
-
-// muxer サンドボックス(ffmpeg.wasm)へのタスク送信を共通化。
-// buildMessage(reqId) が postMessage 本体を返す。transfer は転送する ArrayBuffer 群。
-async function runMuxerTask(buildMessage, transfer, progressLabel) {
-  const { coreReady, iframe } = await muxerHandshake();
-  const wasmBinary = coreReady ? null : await getWasmBinary();
-  const reqId = 'mtask_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
-
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      window.removeEventListener('message', onMsg);
-      reject(new Error(`${progressLabel}タイムアウト（5分）`));
-    }, 300000);
-
-    function onMsg(e) {
-      const d = e.data;
-      if (!d || d.reqId !== reqId) return;
-      if (d.action === 'muxProgress') {
-        const m = /time=(\S+)/.exec(d.line || '');
-        if (m) setMuxProgress(`${progressLabel}... ${m[1]}`);
-        return;
-      }
-      if (d.action === 'muxResult') {
-        clearTimeout(timeout);
-        window.removeEventListener('message', onMsg);
-        if (d.success) resolve(new Uint8Array(d.data));
-        else reject(new Error(d.error));
-      }
-    }
-    window.addEventListener('message', onMsg);
-
-    const msg = buildMessage(reqId);
-    if (wasmBinary) msg.wasmBinary = wasmBinary; // 転送せずコピー（キャッシュ維持）
-    iframe.contentWindow.postMessage(msg, '*', transfer);
-  });
-}
-
-async function muxStreams(videoBytes, audioBytes, names, trim = null) {
-  return runMuxerTask((reqId) => {
-    const msg = {
-      action: 'mux',
-      reqId,
-      video: videoBytes.buffer,
-      audio: audioBytes.buffer,
-      videoName: names.video,
-      audioName: names.audio,
-      outName: names.out
-    };
-    if (trim) msg.trim = { start: trim.startText, end: trim.endText, duration: trim.durationText };
-    return msg;
-  }, [videoBytes.buffer, audioBytes.buffer], '合成中');
-}
-
-async function trimSingleStream(bytes, fmt, trim) {
-  const inputName = `input.${fmt.ext || 'mp4'}`;
-  const fsOutName = `out.${fmt.ext || 'mp4'}`;
-  setMuxProgress('切り出し中...（ウィンドウを閉じないでください）');
-  return runMuxerTask((reqId) => ({
-    action: 'trim',
-    reqId,
-    input: bytes.buffer,
-    inputName,
-    outName: fsOutName,
-    trim: { start: trim.startText, end: trim.endText, duration: trim.durationText }
-  }), [bytes.buffer], '切り出し中');
-}
-
-function chooseMuxContainer(video, audio) {
-  const v = video.ext, a = audio.ext;
-  if (v === 'mp4' && (a === 'm4a' || a === 'mp4')) {
-    return { ext: 'mp4', video: 'video.mp4', audio: 'audio.m4a', out: 'out.mp4', mime: 'video/mp4' };
-  }
-  if (v === 'webm' && (a === 'webm' || a === 'opus')) {
-    return { ext: 'webm', video: 'video.webm', audio: 'audio.webm', out: 'out.webm', mime: 'video/webm' };
-  }
-  // 混在（mp4映像+webm音声 等）は mkv が無劣化copyで安全
-  return { ext: 'mkv', video: `video.${v}`, audio: `audio.${a}`, out: 'out.mkv', mime: 'video/x-matroska' };
-}
-
-async function muxAndDownload(video, audio, videoTitle, els, trim = null) {
-  // 容量超過の警告は popup側(downloadMuxハンドラ)でインライン2段階確認済み。
-  // ここは委譲ウィンドウ/フォールバックで動くため、ブロッキングダイアログ(alert/confirm)は使わない。
-  // 想定外の入力は throw して runDownloadWorker のステータス表示で通知する。
-  // 合計が大きい場合の OOM は下の catch が「メモリ不足」として扱う。
-  if (!video || !audio) throw new Error('映像と音声の両方が必要です');
-  if (video.isMuxed) throw new Error('選択中の映像は既に音声込みです（合成は不要）');
-
-  const buttons = [els.downloadVideo, els.downloadAudio, els.downloadPair, els.downloadMux];
-  buttons.forEach(b => { if (b) b.disabled = true; });
-
-  try {
-    setMuxProgress('映像をダウンロード中...');
-    let vb = await fetchFormatBytes(video, p => setMuxProgress(`映像DL中... ${p}%`));
-    setMuxProgress('音声をダウンロード中...');
-    let ab = await fetchFormatBytes(audio, p => setMuxProgress(`音声DL中... ${p}%`));
-
-    const cont = chooseMuxContainer(video, audio);
-    setMuxProgress('合成中...（ウィンドウを閉じないでください）');
-    const out = await muxStreams(vb, ab, cont, trim);
-    vb = ab = null; // 転送済みだが参照を明示的に解放
-
-    setMuxProgress('保存中...');
-    const blob = new Blob([out], { type: cont.mime });
-    const filename = `${sanitize(videoTitle)}_${sanitize(video.quality)}_muxed${trimSuffix(trim)}.${cont.ext}`;
-    await saveBlob(blob, filename);
-    setMuxProgress('✓ 合成完了');
-    setTimeout(clearMuxProgress, 4000);
-  } catch (e) {
-    clearMuxProgress();
-    console.warn('[ytdl] Mux failed:', e);
-    const msg = String(e && e.message || e);
-    if (/allocation failed|out of memory|memory/i.test(msg)) {
-      throw new Error('メモリ不足で合成できませんでした。低い解像度を選ぶか個別にDLしてください');
-    }
-    throw e;
-  } finally {
-    buttons.forEach(b => { if (b) b.disabled = false; });
-  }
-}
-
-function setMuxProgress(text) {
-  const el = document.getElementById('mux-progress');
-  if (el) { el.textContent = text; el.style.display = 'block'; el.style.color = ''; }
-  syncJobProgress(text);
-}
-
-// 進捗はすべてこの表示を通り、DL中は "NN%" を含む。バーはそれを拾うだけにして、
-// 呼び出し側には手を入れない。割合が出ない工程(合成/保存)は不定形で流す。
-function syncJobProgress(text) {
-  const bar = document.getElementById('job-progress');
-  if (!bar || bar.style.display !== 'block') return;
-  const fill = bar.firstElementChild;
-  const pct = /(\d+)%/.exec(text || '');
-  if (pct) {
-    bar.classList.remove('indeterminate');
-    fill.style.width = `${Math.min(100, Number(pct[1]))}%`;
-  } else {
-    bar.classList.add('indeterminate');
-    fill.style.width = '';
-  }
-}
-
-function clearMuxProgress() {
-  const el = document.getElementById('mux-progress');
-  if (el) { el.style.display = 'none'; el.textContent = ''; el.style.color = ''; }
-}
-
-// popup内のpicker直下メッセージ(検証エラー/容量警告)。alert/confirmはpopupを閉じてしまうため使わない。
-// #mux-progress を流用し、色だけ用途で切り替える(warn=金, error=赤)。
-function showPickerMessage(text, kind) {
-  const el = document.getElementById('mux-progress');
-  if (!el) return;
-  el.textContent = text;
-  el.style.display = 'block';
-  el.style.color = kind === 'warn' ? 'var(--gold)' : kind === 'error' ? 'var(--err)' : '';
-}
-
-function isExpectedMediaType(contentType, fmt) {
-  const type = (contentType || '').toLowerCase();
-  if (fmt.hasVideo && type.startsWith('video/')) return true;
-  if (fmt.hasAudio && !fmt.hasVideo && type.startsWith('audio/')) return true;
-  return fmt.isMuxed && (type.startsWith('video/') || type.startsWith('audio/'));
 }
 
 function highestVideoHeight(formats) {
@@ -2270,4 +1661,263 @@ function mimeToExt(mime) {
   if (mime.includes('webm')) return 'webm';
   if (mime.includes('opus') || mime.includes('ogg')) return 'opus';
   return 'mp4';
+}
+
+// ─── プレイリスト一括ダウンロード ─────────────────────────────
+// /playlist?list=ID または /watch?v=...&list=ID のときに有効。
+// Innertube browse エンドポイントでプレイリスト項目を取得し、
+// 各動画を最高画質の muxed (itag18) で順次キューする。
+
+function extractPlaylistId(url) {
+  try {
+    const u = new URL(url);
+    return u.searchParams.get('list');
+  } catch (_) { return null; }
+}
+
+async function fetchPlaylistItems(playlistId, tabId) {
+  const cfg = globalThis.OCHA_YTDL_YOUTUBE_CONFIG;
+  const apiKey = cfg?.defaultInnertubeApiKey || DEFAULT_INNERTUBE_API_KEY;
+  const clientVersion = cfg?.defaultWebClientVersion || DEFAULT_WEB_CLIENT_VERSION;
+
+  const body = {
+    context: { client: { clientName: 'WEB', clientVersion, hl: 'ja', gl: 'JP' } },
+    browseId: 'VL' + playlistId
+  };
+
+  // ページ MAIN world から叩く（same-origin なので CORS 問題なし）
+  const [result] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    args: [apiKey, body],
+    func: async (apiKey, body) => {
+      try {
+        const resp = await fetch(
+          `https://www.youtube.com/youtubei/v1/browse?key=${encodeURIComponent(apiKey)}&prettyPrint=false`,
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+        );
+        return await resp.json();
+      } catch (e) { return { error: e?.message || String(e) }; }
+    }
+  });
+
+  const data = result?.result;
+  if (!data || data.error) throw new Error(data?.error || 'プレイリスト取得失敗');
+
+  // playlistVideoListRenderer の items から videoId / title を抽出
+  const items = [];
+  const sections = data?.contents?.twoColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents
+    || data?.contents?.sectionListRenderer?.contents
+    || [];
+  for (const section of sections) {
+    const listItems = section?.itemSectionRenderer?.contents?.[0]?.playlistVideoListRenderer?.items || [];
+    for (const li of listItems) {
+      const v = li?.playlistVideoRenderer;
+      if (!v?.videoId) continue;
+      items.push({
+        videoId: v.videoId,
+        title: v?.title?.runs?.[0]?.text || v?.title?.simpleText || v.videoId,
+        index: items.length + 1
+      });
+    }
+  }
+
+  // continuation がある場合は追加取得（最大3ページ = 約300件）
+  let token = null;
+  for (const section of sections) {
+    const cont = section?.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token;
+    if (cont) { token = cont; break; }
+  }
+  let pages = 0;
+  while (token && pages < 3) {
+    pages++;
+    const [more] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      args: [apiKey, token, clientVersion],
+      func: async (apiKey, token, clientVersion) => {
+        try {
+          const resp = await fetch(
+            `https://www.youtube.com/youtubei/v1/browse?key=${encodeURIComponent(apiKey)}&prettyPrint=false`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                context: { client: { clientName: 'WEB', clientVersion, hl: 'ja', gl: 'JP' } },
+                continuation: token
+              })
+            }
+          );
+          return await resp.json();
+        } catch (e) { return { error: e?.message || String(e) }; }
+      }
+    });
+    const md = more?.result;
+    if (!md || md.error) break;
+    const contItems = md?.onResponseReceivedActions?.[0]?.appendContinuationItemsAction?.continuationItems
+      || md?.continuationContents?.playlistVideoListContinuation?.items
+      || [];
+    for (const li of contItems) {
+      const v = li?.playlistVideoRenderer;
+      if (!v?.videoId) continue;
+      items.push({
+        videoId: v.videoId,
+        title: v?.title?.runs?.[0]?.text || v?.title?.simpleText || v.videoId,
+        index: items.length + 1
+      });
+    }
+    token = null;
+    for (const li of contItems) {
+      const cont = li?.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token;
+      if (cont) { token = cont; break; }
+    }
+  }
+
+  return items;
+}
+
+// プレイリスト動画1本分のフォーマットを取得してジョブを投げる
+async function queuePlaylistDownload(videoId, title, tabId, visitorData) {
+  const cfg = globalThis.OCHA_YTDL_YOUTUBE_CONFIG;
+  const profile = cfg?.innertubeClientProfiles?.find(p => p.key === 'visionos');
+  if (!profile) throw new Error('visionos client not found');
+
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-YouTube-Client-Name': String(cfg.clientNameHeaders[profile.clientName]),
+    'X-YouTube-Client-Version': profile.clientVersion
+  };
+  if (visitorData) headers['X-Goog-Visitor-Id'] = visitorData;
+
+  const client = { ...profile.contextClient };
+  if (visitorData) client.visitorData = visitorData;
+
+  const [result] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    args: [cfg.defaultInnertubeApiKey, { context: { client }, videoId, contentCheckOk: true, racyCheckOk: true }, headers],
+    func: async (apiKey, body, headers) => {
+      try {
+        const resp = await fetch(
+          `https://www.youtube.com/youtubei/v1/player?key=${encodeURIComponent(apiKey)}&prettyPrint=false`,
+          { method: 'POST', headers, body: JSON.stringify(body) }
+        );
+        return await resp.json();
+      } catch (e) { return { error: e?.message || String(e) }; }
+    }
+  });
+
+  const data = result?.result;
+  if (!data || data.error || data?.playabilityStatus?.status !== 'OK') {
+    throw new Error(data?.playabilityStatus?.reason || data?.error || '取得失敗');
+  }
+
+  const sd = data?.streamingData;
+  if (!sd) throw new Error('streamingData なし');
+
+  // progressive (muxed) があればそれを、なければ映像+音声をペアで
+  const progressive = (sd.formats || []).filter(f => f.url);
+  if (progressive.length) {
+    const best = progressive.sort((a, b) => (b.height || 0) - (a.height || 0))[0];
+    const mime = best.mimeType || '';
+    const fmt = {
+      itag: best.itag, url: best.url,
+      quality: best.qualityLabel || best.quality || String(best.itag),
+      mimeType: mime,
+      ext: /webm/.test(mime) ? 'webm' : 'mp4',
+      isMuxed: true, hasVideo: true, hasAudio: true,
+      source: 'visionos', potFree: true,
+      height: best.height || null, fps: best.fps || null,
+      bitrate: best.bitrate || 0,
+      contentLength: Number(best.contentLength) || null
+    };
+    await OchaDownload.dispatchDownloadJob({
+      items: [{ kind: 'single', fmt, dlKind: 'muxed', trim: null }],
+      videoTitle: title,
+      ctx: { tabId, videoId, visitorData }
+    });
+    return;
+  }
+
+  // progressive が無い場合は adaptive から選ぶ（映像+音声の mux）
+  const adaptive = (sd.adaptiveFormats || []).filter(f => f.url);
+  const video = adaptive.filter(f => (f.mimeType || '').startsWith('video/'))
+    .sort((a, b) => (b.height || 0) - (a.height || 0))[0];
+  const audio = adaptive.filter(f => (f.mimeType || '').startsWith('audio/'))
+    .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+  if (!video || !audio) throw new Error('フォーマット不足');
+
+  const mk = (f, isVid) => ({
+    itag: f.itag, url: f.url,
+    quality: f.qualityLabel || f.quality || String(f.itag),
+    mimeType: f.mimeType || '',
+    ext: /webm/.test(f.mimeType || '') ? 'webm' : /mp4/.test(f.mimeType || '') ? (isVid ? 'mp4' : 'm4a') : 'bin',
+    isMuxed: false, hasVideo: isVid, hasAudio: !isVid,
+    source: 'visionos', potFree: true,
+    height: f.height || null, fps: f.fps || null,
+    bitrate: f.bitrate || 0,
+    contentLength: Number(f.contentLength) || null
+  });
+
+  await OchaDownload.dispatchDownloadJob({
+    items: [{ kind: 'mux', video: mk(video, true), audio: mk(audio, false), trim: null }],
+    videoTitle: title,
+    ctx: { tabId, videoId, visitorData }
+  });
+}
+
+function setupPlaylistUI(playlistId, tab) {
+  const section = document.getElementById('playlist-section');
+  const infoEl = document.getElementById('playlist-info');
+  const fetchBtn = document.getElementById('playlist-fetch');
+  const dlBtn = document.getElementById('playlist-download');
+  const progressEl = document.getElementById('playlist-progress');
+  if (!section || !fetchBtn || !dlBtn) return;
+
+  section.style.display = 'block';
+  infoEl.textContent = `リスト: ${playlistId}`;
+  dlBtn.disabled = true;
+  dlBtn.textContent = '全件保存';
+
+  let items = [];
+
+  fetchBtn.addEventListener('click', async () => {
+    fetchBtn.disabled = true;
+    fetchBtn.textContent = '取得中...';
+    progressEl.style.display = 'block';
+    progressEl.textContent = 'プレイリストを読み込み中...';
+    try {
+      items = await fetchPlaylistItems(playlistId, tab.id);
+      if (!items.length) throw new Error('動画が見つかりませんでした');
+      infoEl.textContent = `${items.length}件の動画`;
+      dlBtn.disabled = false;
+      progressEl.textContent = `${items.length}件取得しました。「全件保存」を押してください。`;
+    } catch (e) {
+      progressEl.textContent = '取得失敗: ' + (e?.message || e);
+      fetchBtn.disabled = false;
+      fetchBtn.textContent = '一覧を取得';
+    }
+  });
+
+  dlBtn.addEventListener('click', async () => {
+    if (!items.length) return;
+    dlBtn.disabled = true;
+    fetchBtn.disabled = true;
+    const visitorData = null; // ページから取得済みなら使う
+    let ok = 0, fail = 0;
+    for (const item of items) {
+      progressEl.textContent = `${item.index}/${items.length}: ${item.title.slice(0, 40)}...`;
+      try {
+        await queuePlaylistDownload(item.videoId, item.title, tab.id, visitorData);
+        ok++;
+      } catch (e) {
+        fail++;
+        console.warn(`[ytdl] playlist item failed: ${item.videoId}`, e);
+      }
+      // レート制限回避のため少し待つ
+      await new Promise(r => setTimeout(r, 800));
+    }
+    progressEl.textContent = `完了: ${ok}件成功, ${fail}件失敗`;
+    dlBtn.textContent = '保存開始済み';
+  });
 }
