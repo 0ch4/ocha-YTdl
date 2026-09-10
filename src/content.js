@@ -224,92 +224,6 @@ function visitorData() {
   return null;
 }
 
-// ─── プレイリスト取得 ─────────────────────────────────────
-// youtube.com 上の same-origin なので CORS 問題なし。browse API を直接叩く。
-async function fetchPlaylistItems(playlistId) {
-  const cfg = CFG();
-  const apiKey = cfg?.defaultInnertubeApiKey;
-  const clientVersion = cfg?.defaultWebClientVersion;
-  if (!apiKey) throw new Error('API key not found');
-
-  const body = {
-    context: { client: { clientName: 'WEB', clientVersion, hl: 'ja', gl: 'JP' } },
-    browseId: 'VL' + playlistId
-  };
-
-  const resp = await fetch(
-    `https://www.youtube.com/youtubei/v1/browse?key=${encodeURIComponent(apiKey)}&prettyPrint=false`,
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
-  );
-  const data = await resp.json();
-  if (!data || data.error) throw new Error(data?.error?.message || 'プレイリスト取得失敗');
-
-  const items = [];
-  const seen = new Set();
-
-  function walk(node, depth) {
-    if (!node || typeof node !== 'object' || depth > 30) return;
-    if (Array.isArray(node)) { for (const c of node) walk(c, depth + 1); return; }
-    // 旧レイアウト: playlistVideoRenderer
-    const pvr = node.playlistVideoRenderer;
-    if (pvr?.videoId && !seen.has(pvr.videoId)) {
-      seen.add(pvr.videoId);
-      items.push({
-        videoId: pvr.videoId,
-        title: pvr?.title?.runs?.[0]?.text || pvr?.title?.simpleText || pvr.videoId,
-        index: items.length + 1
-      });
-    }
-    // 新レイアウト(2025-): lockupViewModel
-    const lvm = node.lockupViewModel;
-    if (lvm?.contentId && lvm?.contentType === 'LOCKUP_CONTENT_TYPE_VIDEO' && !seen.has(lvm.contentId)) {
-      seen.add(lvm.contentId);
-      items.push({
-        videoId: lvm.contentId,
-        title: lvm?.metadata?.lockupMetadataViewModel?.title?.content || lvm.contentId,
-        index: items.length + 1
-      });
-    }
-    for (const key of Object.keys(node)) {
-      if (key === 'playlistVideoRenderer' || key === 'lockupViewModel') continue;
-      walk(node[key], depth + 1);
-    }
-  }
-
-  function findToken(node, depth) {
-    if (!node || typeof node !== 'object' || depth > 30) return null;
-    if (Array.isArray(node)) { for (const c of node) { const t = findToken(c, depth + 1); if (t) return t; } return null; }
-    const t = node.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token;
-    if (t) return t;
-    for (const key of Object.keys(node)) { const t2 = findToken(node[key], depth + 1); if (t2) return t2; }
-    return null;
-  }
-
-  walk(data, 0);
-  let token = findToken(data, 0);
-  let pages = 0;
-  while (token && pages < 3) {
-    pages++;
-    const r = await fetch(
-      `https://www.youtube.com/youtubei/v1/browse?key=${encodeURIComponent(apiKey)}&prettyPrint=false`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          context: { client: { clientName: 'WEB', clientVersion, hl: 'ja', gl: 'JP' } },
-          continuation: token
-        })
-      }
-    );
-    const md = await r.json();
-    if (!md || md.error) break;
-    walk(md, 0);
-    token = findToken(md, 0);
-  }
-
-  return items;
-}
-
 async function fetchFormats(videoId) {
   const cfg = CFG();
   const failures = [];
@@ -1204,18 +1118,99 @@ function watchForRemount() {
   setInterval(ensureMounted, 800);
 }
 
-document.addEventListener('yt-navigate-finish', init);
-init();
-// セーフティネットは初期化の成否に関わらず必ず起動する。init が videoId 無しで
-// 早期リターンしても、あとから SPA 遷移で watch/shorts に移れば ensureMounted が拾う。
-watchForRemount();
-
 // ─── プレイリスト一括ダウンロード ─────────────────────────
 // /playlist ページに「全件保存」ボタンを差し込む。
 // youtube.com 上の same-origin なので browse API / player API は直接叩ける。
 // ダウンロード本体は既存の background → popup.html?job= のワーカーに委譲する。
+// ※ init() の前に定義すること。init() は同期的に mountPlaylist() を呼ぶため、
+//   PLAYLIST_HOST_ID が TDZ だと初回パスが黙って失敗する。
 
 const PLAYLIST_HOST_ID = 'ocha-ytdl-playlist-host';
+
+// プレイリストの browse API 応答から動画一覧を再帰探索で抽出
+async function fetchPlaylistItems(playlistId) {
+  const cfg = CFG();
+  const apiKey = cfg?.defaultInnertubeApiKey;
+  const clientVersion = cfg?.defaultWebClientVersion;
+  if (!apiKey) throw new Error('API key not found');
+
+  const body = {
+    context: { client: { clientName: 'WEB', clientVersion, hl: 'ja', gl: 'JP' } },
+    browseId: 'VL' + playlistId
+  };
+
+  const resp = await fetch(
+    `https://www.youtube.com/youtubei/v1/browse?key=${encodeURIComponent(apiKey)}&prettyPrint=false`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+  );
+  const data = await resp.json();
+  if (!data || data.error) throw new Error(data?.error?.message || 'プレイリスト取得失敗');
+
+  const items = [];
+  const seen = new Set();
+
+  function walk(node, depth) {
+    if (!node || typeof node !== 'object' || depth > 30) return;
+    if (Array.isArray(node)) { for (const c of node) walk(c, depth + 1); return; }
+    // 旧レイアウト: playlistVideoRenderer
+    const pvr = node.playlistVideoRenderer;
+    if (pvr?.videoId && !seen.has(pvr.videoId)) {
+      seen.add(pvr.videoId);
+      items.push({
+        videoId: pvr.videoId,
+        title: pvr?.title?.runs?.[0]?.text || pvr?.title?.simpleText || pvr.videoId,
+        index: items.length + 1
+      });
+    }
+    // 新レイアウト(2025-): lockupViewModel
+    const lvm = node.lockupViewModel;
+    if (lvm?.contentId && lvm?.contentType === 'LOCKUP_CONTENT_TYPE_VIDEO' && !seen.has(lvm.contentId)) {
+      seen.add(lvm.contentId);
+      items.push({
+        videoId: lvm.contentId,
+        title: lvm?.metadata?.lockupMetadataViewModel?.title?.content || lvm.contentId,
+        index: items.length + 1
+      });
+    }
+    for (const key of Object.keys(node)) {
+      if (key === 'playlistVideoRenderer' || key === 'lockupViewModel') continue;
+      walk(node[key], depth + 1);
+    }
+  }
+
+  function findToken(node, depth) {
+    if (!node || typeof node !== 'object' || depth > 30) return null;
+    if (Array.isArray(node)) { for (const c of node) { const t = findToken(c, depth + 1); if (t) return t; } return null; }
+    const t = node.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token;
+    if (t) return t;
+    for (const key of Object.keys(node)) { const t2 = findToken(node[key], depth + 1); if (t2) return t2; }
+    return null;
+  }
+
+  walk(data, 0);
+  let token = findToken(data, 0);
+  let pages = 0;
+  while (token && pages < 3) {
+    pages++;
+    const r = await fetch(
+      `https://www.youtube.com/youtubei/v1/browse?key=${encodeURIComponent(apiKey)}&prettyPrint=false`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          context: { client: { clientName: 'WEB', clientVersion, hl: 'ja', gl: 'JP' } },
+          continuation: token
+        })
+      }
+    );
+    const md = await r.json();
+    if (!md || md.error) break;
+    walk(md, 0);
+    token = findToken(md, 0);
+  }
+
+  return items;
+}
 
 function mountPlaylist() {
   if (document.getElementById(PLAYLIST_HOST_ID)) return;
@@ -1372,3 +1367,9 @@ async function queuePlaylistItem(videoId, title, opts = {}) {
   });
   if (!res?.ok) throw new Error(res?.error || 'ジョブ送出失敗');
 }
+
+document.addEventListener('yt-navigate-finish', init);
+init();
+// セーフティネットは初期化の成否に関わらず必ず起動する。init が videoId 無しで
+// 早期リターンしても、あとから SPA 遷移で watch/shorts に移れば ensureMounted が拾う。
+watchForRemount();
